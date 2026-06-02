@@ -49,7 +49,7 @@ import {
   WritingGoals,
   WritingStats
 } from '../types';
-import { makeId, nextNumberedId, nowIso, posixPath, slugify } from './utils';
+import { makeId, nextNumberedId, nowIso, posixPath, slugify, stripUtf8Bom } from './utils';
 
 export type ExportFormat = 'markdown' | 'txt' | 'docx' | 'epub' | 'pdf';
 
@@ -73,7 +73,11 @@ export class LoreDockStorage {
   public constructor(public readonly workspaceRoot: string) {}
 
   public resolve(relativePath: string): string {
-    return path.join(this.workspaceRoot, relativePath);
+    const normalized = toWorkspaceRelativePath(relativePath);
+    if (!normalized) {
+      return this.workspaceRoot;
+    }
+    return path.join(this.workspaceRoot, ...normalized.split('/'));
   }
 
   public async manifestExists(): Promise<boolean> {
@@ -188,7 +192,7 @@ export class LoreDockStorage {
   public async readAIConfig(): Promise<AIConfigFile> {
     await this.ensureAIConfigFile();
     const raw = await fs.readFile(this.resolve(AI_CONFIG_FILE), 'utf8');
-    return JSON.parse(stripJsonComments(raw)) as AIConfigFile;
+    return JSON.parse(stripJsonComments(stripUtf8Bom(raw))) as AIConfigFile;
   }
 
   public async writeAIConfig(config: AIConfigFile): Promise<void> {
@@ -457,10 +461,10 @@ export class LoreDockStorage {
     if (!manifest) {
       return undefined;
     }
-    const normalized = path.normalize(absolutePath);
+    const normalized = normalizePathForCompare(absolutePath);
     for (const volume of manifest.volumes) {
       for (const chapter of volume.chapters) {
-        if (path.normalize(this.resolve(chapter.filePath)) === normalized) {
+        if (normalizePathForCompare(this.resolve(chapter.filePath)) === normalized) {
           return { volume, chapter };
         }
       }
@@ -524,12 +528,12 @@ export class LoreDockStorage {
   public async readExportStyle(): Promise<ExportStyle> {
     await this.ensureExportStyleFile();
     const raw = await fs.readFile(this.resolve(EXPORT_STYLE_FILE), 'utf8');
-    return { ...defaultExportStyle(), ...(JSON.parse(stripJsonComments(raw)) as Partial<ExportStyle>), schemaVersion: 1 };
+    return { ...defaultExportStyle(), ...(JSON.parse(stripJsonComments(stripUtf8Bom(raw))) as Partial<ExportStyle>), schemaVersion: 1 };
   }
 
   public async importManuscript(sourceName: string, content: string): Promise<ChapterMeta[]> {
     await this.requireManifest();
-    const baseName = path.basename(sourceName).replace(/\.[^.]+$/, '') || '导入手稿';
+    const baseName = path.basename(sourceName.replace(/\\/g, '/')).replace(/\.[^.]+$/, '') || '导入手稿';
     const chapters = splitImportedChapters(content);
     const volume = await this.createVolume(`导入：${baseName}`);
     const created: ChapterMeta[] = [];
@@ -829,7 +833,7 @@ export class LoreDockStorage {
   }
 
   public async deleteCodexEntry(relativePath: string): Promise<void> {
-    const normalized = relativePath.replace(/\\/g, '/');
+    const normalized = toWorkspaceRelativePath(relativePath);
     const allowed =
       normalized.startsWith(`${CHARACTERS_DIR}/`) ||
       normalized.startsWith(`${LOCATIONS_DIR}/`) ||
@@ -845,13 +849,13 @@ export class LoreDockStorage {
   }
 
   public async readCodexEntry(relativePath: string): Promise<CodexEntry> {
-    const normalized = relativePath.replace(/\\/g, '/');
+    const normalized = toWorkspaceRelativePath(relativePath);
     const card = await this.readJson<CodexCard>(normalized);
     return { card, relativePath: normalized };
   }
 
   public async writeCodexEntry(relativePath: string, card: CodexCard): Promise<CodexEntry> {
-    const normalized = relativePath.replace(/\\/g, '/');
+    const normalized = toWorkspaceRelativePath(relativePath);
     if (!normalized.startsWith(`${CODEX_DIR}/`) || !normalized.endsWith('.json')) {
       throw new Error('只能保存 LoreDock 资料库里的 JSON 卡片。');
     }
@@ -1144,7 +1148,7 @@ export class LoreDockStorage {
 
   private async readJson<T>(relativePath: string): Promise<T> {
     const raw = await fs.readFile(this.resolve(relativePath), 'utf8');
-    return JSON.parse(raw) as T;
+    return JSON.parse(stripUtf8Bom(raw)) as T;
   }
 
   private async writeJson(relativePath: string, value: unknown): Promise<void> {
@@ -1181,6 +1185,27 @@ export class LoreDockStorage {
       volumes
     };
   }
+}
+
+function toWorkspaceRelativePath(relativePath: string): string {
+  const forwardPath = relativePath.replace(/\\/g, '/');
+  const rawSegments = forwardPath.split('/');
+  if (path.isAbsolute(relativePath) || path.posix.isAbsolute(forwardPath) || /^[A-Za-z]:/.test(forwardPath) || rawSegments.includes('..')) {
+    throw new Error(`Invalid LoreDock workspace path: ${relativePath}`);
+  }
+  const normalized = path.posix.normalize(forwardPath);
+  if (normalized === '.') {
+    return '';
+  }
+  if (normalized === '..' || normalized.startsWith('../') || normalized.includes('\0')) {
+    throw new Error(`Invalid LoreDock workspace path: ${relativePath}`);
+  }
+  return normalized;
+}
+
+function normalizePathForCompare(filePath: string): string {
+  const normalized = path.resolve(filePath);
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
 export function findChapterRef(manifest: ProjectManifest, chapterId: string): ChapterRef | undefined {
@@ -1416,7 +1441,7 @@ function stripJsonComments(input: string): string {
 
 function parseEnvFile(input: string): Record<string, string> {
   const values: Record<string, string> = {};
-  for (const line of input.split(/\r?\n/)) {
+  for (const line of stripUtf8Bom(input).split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) {
       continue;

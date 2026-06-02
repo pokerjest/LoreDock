@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { buildContextPackage, filterContextPackage } from '../../core/contextBuilder';
 import { LoreDockStorage } from '../../core/storage';
+import { decodeTextBuffer, slugify } from '../../core/utils';
 import { countWords } from '../../core/wordCount';
 import { anthropicEndpoint, buildChatCompletionPayload, buildClaudePayload, buildGeminiPayload, normalizeApiKey, validateBaseUrl } from '../../services/aiClient';
 import { AISettings, CharacterCard } from '../../types';
@@ -39,6 +40,69 @@ test('initializes a local LoreDock project and prevents accidental re-init', asy
     }),
     /already exists/
   );
+});
+
+test('resolves workspace-relative paths with Windows separators', async () => {
+  const storage = await initializedStorage();
+  const chapter = (await storage.requireManifest()).volumes[0].chapters[0];
+  const chapterPath = storage.resolve('manuscript\\volume-001\\chapter-001.md');
+
+  assert.equal(chapterPath, path.join(storage.workspaceRoot, 'manuscript', 'volume-001', 'chapter-001.md'));
+  assert.equal((await storage.getChapterRefByFilePath(chapterPath))?.chapter.id, chapter.id);
+  if (process.platform === 'win32') {
+    assert.equal((await storage.getChapterRefByFilePath(chapterPath.toUpperCase()))?.chapter.id, chapter.id);
+  }
+  assert.throws(() => storage.resolve('..\\outside'), /Invalid LoreDock workspace path/);
+});
+
+test('rejects traversal and absolute workspace-relative paths', async () => {
+  const storage = await initializedStorage();
+
+  assert.throws(() => storage.resolve('manuscript/../outside.md'), /Invalid LoreDock workspace path/);
+  assert.throws(() => storage.resolve('/outside.md'), /Invalid LoreDock workspace path/);
+  assert.throws(() => storage.resolve('C:outside.md'), /Invalid LoreDock workspace path/);
+  assert.throws(() => storage.resolve('C:\\outside.md'), /Invalid LoreDock workspace path/);
+  await assert.rejects(storage.deleteCodexEntry('codex/characters/../../outside.json'), /Invalid LoreDock workspace path/);
+});
+
+test('uses portable names for imported sources and exported files', async () => {
+  const storage = await initializedStorage();
+  await storage.importManuscript('C:\\drafts\\old.md', '# 旧章\n\n第一段。');
+  const manifest = await storage.requireManifest();
+
+  assert.equal(manifest.volumes.some((volume) => volume.title.endsWith('old')), true);
+  assert.equal(slugify('CON'), 'con-file');
+
+  manifest.title = 'CON';
+  await storage.writeManifest(manifest);
+  const exported = await storage.exportManuscript('markdown');
+
+  assert.equal(path.basename(storage.resolve(exported)), 'con-file.md');
+});
+
+test('decodes BOM text and reads BOM-prefixed local files', async () => {
+  assert.equal(decodeTextBuffer(Buffer.from([0xef, 0xbb, 0xbf, 0x48, 0x69])), 'Hi');
+  assert.equal(decodeTextBuffer(Buffer.from([0xff, 0xfe, 0x48, 0x00, 0x69, 0x00])), 'Hi');
+  assert.equal(decodeTextBuffer(Buffer.from([0xfe, 0xff, 0x00, 0x48, 0x00, 0x69])), 'Hi');
+
+  const storage = await initializedStorage();
+  await storage.ensureAIConfigFile();
+  await fs.writeFile(storage.resolve('.loredock/ai.env'), '\uFEFFOPENROUTER_API_KEY=sk-router-test\n', 'utf8');
+  assert.equal((await storage.readAIEnv()).OPENROUTER_API_KEY, 'sk-router-test');
+
+  const config = await storage.readAIConfig();
+  await fs.writeFile(storage.resolve('.loredock/ai.local.jsonc'), `\uFEFF${JSON.stringify(config, null, 2)}\n`, 'utf8');
+  assert.equal((await storage.readAIConfig()).activeProvider, config.activeProvider);
+
+  const stylePath = await storage.ensureExportStyleFile();
+  await fs.writeFile(storage.resolve(stylePath), '\uFEFF{"fontSize": 14}\n', 'utf8');
+  assert.equal((await storage.readExportStyle()).fontSize, 14);
+
+  const card = await storage.createCharacter({ name: 'BOM Card' });
+  const entry = await storage.findCodexEntryById(card.id);
+  assert.ok(entry);
+  await fs.writeFile(storage.resolve(entry.relativePath), `\uFEFF${JSON.stringify(card, null, 2)}\n`, 'utf8');
+  assert.equal((await storage.readCodexEntry(entry.relativePath)).card.id, card.id);
 });
 
 test('creates chapters and refreshes word count metadata', async () => {

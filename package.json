@@ -2,7 +2,7 @@
   "name": "loredock-vscode",
   "displayName": "LoreDock",
   "description": "Local-first AI writing workspace for long-form fiction.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "pokerjest",
   "license": "MIT",
   "repository": {
@@ -49,7 +49,7 @@
     "watch": "tsc -watch -p ./",
     "test": "npm run compile && node --test \"out/test/unit/**/*.test.js\"",
     "test:integration": "npm run compile && node ./out/test/runTest.js",
-    "package:vsix": "vsce package --out loredock-vscode-0.1.0.vsix"
+    "package:vsix": "vsce package --out loredock-vscode-0.1.1.vsix"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",

@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import * as vscode from 'vscode';
 import {
@@ -11,7 +12,7 @@ import {
 } from './core/contextBuilder';
 import { SECRET_API_KEY } from './core/constants';
 import { ExportFormat, LoreDockStorage } from './core/storage';
-import { makeId, nowIso } from './core/utils';
+import { decodeTextBuffer, makeId, nowIso, stripUtf8Bom } from './core/utils';
 import { AIClient, normalizeApiKey } from './services/aiClient';
 import { showCodexFormPanel } from './webviews/codexFormPanel';
 import { showContextPreview } from './webviews/contextPreviewPanel';
@@ -1088,7 +1089,7 @@ async function importManuscript(
   if (!uri) {
     return;
   }
-  const content = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
+  const content = decodeTextBuffer(await vscode.workspace.fs.readFile(uri));
   const chapters = await storage.importManuscript(uri.fsPath, content);
   manuscriptTree.refresh();
   vscode.window.showInformationMessage(`已导入 ${chapters.length} 个章节。`);
@@ -2100,15 +2101,22 @@ function preflightAdvice(result: Awaited<ReturnType<AIClient['preflight']>>): st
 }
 
 async function readClaudeCliProfile(): Promise<{ baseUrl?: string; apiKey?: string; model?: string }> {
-  const home = process.env.HOME;
+  const home = os.homedir() || process.env.USERPROFILE || process.env.HOME;
   if (!home) {
     return {};
   }
-  const candidates = [path.join(home, '.claude', 'settings.json'), path.join(home, '.config', 'claude', 'settings.json')];
-  for (const filePath of candidates) {
+  const candidates = [
+    path.join(home, '.claude', 'settings.json'),
+    path.join(home, '.config', 'claude', 'settings.json'),
+    ...(process.env.XDG_CONFIG_HOME ? [path.join(process.env.XDG_CONFIG_HOME, 'claude', 'settings.json')] : []),
+    ...(process.env.APPDATA
+      ? [path.join(process.env.APPDATA, 'Claude', 'settings.json'), path.join(process.env.APPDATA, 'claude', 'settings.json')]
+      : [])
+  ];
+  for (const filePath of [...new Set(candidates)]) {
     try {
       const raw = await fs.readFile(filePath, 'utf8');
-      const parsed = JSON.parse(raw) as {
+      const parsed = JSON.parse(stripUtf8Bom(raw)) as {
         model?: string;
         env?: Record<string, string>;
       };

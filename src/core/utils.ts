@@ -1,5 +1,7 @@
 import path from 'node:path';
 
+const WINDOWS_RESERVED_BASENAMES = new Set(['con', 'prn', 'aux', 'nul', 'com1', 'com2', 'com3', 'com4', 'com5', 'com6', 'com7', 'com8', 'com9', 'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9']);
+
 export function nowIso(): string {
   return new Date().toISOString();
 }
@@ -15,7 +17,31 @@ export function slugify(value: string): string {
     .replace(/['"]/g, '')
     .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '-')
     .replace(/^-+|-+$/g, '');
-  return normalized || 'untitled';
+  const slug = normalized || 'untitled';
+  return WINDOWS_RESERVED_BASENAMES.has(slug) ? `${slug}-file` : slug;
+}
+
+export function stripUtf8Bom(value: string): string {
+  return value.charCodeAt(0) === 0xfeff ? value.slice(1) : value;
+}
+
+export function decodeTextBuffer(input: Uint8Array): string {
+  const buffer = Buffer.from(input);
+  if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+    return buffer.subarray(3).toString('utf8');
+  }
+  if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe) {
+    return buffer.subarray(2).toString('utf16le');
+  }
+  if (buffer.length >= 2 && buffer[0] === 0xfe && buffer[1] === 0xff) {
+    const swapped = Buffer.alloc(Math.max(0, buffer.length - 2));
+    for (let index = 2; index + 1 < buffer.length; index += 2) {
+      swapped[index - 2] = buffer[index + 1];
+      swapped[index - 1] = buffer[index];
+    }
+    return swapped.toString('utf16le');
+  }
+  return buffer.toString('utf8');
 }
 
 export function nextNumberedId(prefix: string, existingIds: string[]): string {
