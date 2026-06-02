@@ -1,0 +1,737 @@
+{
+  "name": "loredock-vscode",
+  "displayName": "LoreDock",
+  "description": "Local-first AI writing workspace for long-form fiction.",
+  "version": "0.1.0",
+  "publisher": "pokerjest",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pokerjest/LoreDock.git"
+  },
+  "bugs": {
+    "url": "https://github.com/pokerjest/LoreDock/issues"
+  },
+  "homepage": "https://github.com/pokerjest/LoreDock#readme",
+  "keywords": [
+    "novel",
+    "writing",
+    "ai",
+    "fiction",
+    "loredock"
+  ],
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:loredock.manuscript",
+    "onView:loredock.codex",
+    "onView:loredock.aiStatus",
+    "onCommand:loredock.initProject",
+    "onCommand:loredock.openSettings",
+    "onCommand:loredock.configureAI",
+    "onCommand:loredock.diagnoseAIConfig",
+    "onCommand:loredock.openStyleGuide",
+    "onCommand:loredock.importManuscript",
+    "onCommand:loredock.exportManuscript",
+    "onCommand:loredock.continueChapter",
+    "onCommand:loredock.polishSelection",
+    "onCommand:loredock.generateChapterSummary",
+    "onCommand:loredock.checkConsistency"
+  ],
+  "main": "./out/extension.js",
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "npm run compile && node --test \"out/test/unit/**/*.test.js\"",
+    "test:integration": "npm run compile && node ./out/test/runTest.js",
+    "package:vsix": "vsce package --out loredock-vscode-0.1.0.vsix"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/vscode": "^1.90.0",
+    "@vscode/test-electron": "^2.4.0",
+    "@vscode/vsce": "^3.9.1",
+    "typescript": "^5.5.3"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "loredock",
+          "title": "LoreDock",
+          "icon": "resources/loredock.svg"
+        }
+      ]
+    },
+    "views": {
+      "loredock": [
+        {
+          "id": "loredock.manuscript",
+          "name": "手稿"
+        },
+        {
+          "id": "loredock.codex",
+          "name": "资料库"
+        },
+        {
+          "id": "loredock.aiStatus",
+          "name": "AI 状态"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "loredock.initProject",
+        "title": "LoreDock: 初始化小说项目"
+      },
+      {
+        "command": "loredock.refreshViews",
+        "title": "LoreDock: 刷新",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "loredock.openSettings",
+        "title": "LoreDock: 设置",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "loredock.showManuscriptActions",
+        "title": "LoreDock: 手稿操作",
+        "icon": "$(kebab-horizontal)"
+      },
+      {
+        "command": "loredock.showCodexActions",
+        "title": "LoreDock: 资料库操作",
+        "icon": "$(kebab-horizontal)"
+      },
+      {
+        "command": "loredock.createVolume",
+        "title": "LoreDock: 新建卷"
+      },
+      {
+        "command": "loredock.deleteProject",
+        "title": "LoreDock: 删除书籍"
+      },
+      {
+        "command": "loredock.deleteVolume",
+        "title": "LoreDock: 删除卷"
+      },
+      {
+        "command": "loredock.createChapter",
+        "title": "LoreDock: 新建章节"
+      },
+      {
+        "command": "loredock.openChapter",
+        "title": "LoreDock: 打开章节"
+      },
+      {
+        "command": "loredock.renameChapter",
+        "title": "LoreDock: 重命名章节"
+      },
+      {
+        "command": "loredock.setChapterStatus",
+        "title": "LoreDock: 设置章节状态"
+      },
+      {
+        "command": "loredock.deleteChapter",
+        "title": "LoreDock: 删除章节"
+      },
+      {
+        "command": "loredock.createCharacter",
+        "title": "LoreDock: 新建人物卡"
+      },
+      {
+        "command": "loredock.createLocation",
+        "title": "LoreDock: 新建地点卡"
+      },
+      {
+        "command": "loredock.createWorldRule",
+        "title": "LoreDock: 新建世界规则"
+      },
+      {
+        "command": "loredock.createForeshadowing",
+        "title": "LoreDock: 新建伏笔"
+      },
+      {
+        "command": "loredock.createTimelineEvent",
+        "title": "LoreDock: 新建时间线事件"
+      },
+      {
+        "command": "loredock.createScene",
+        "title": "LoreDock: 新建场景"
+      },
+      {
+        "command": "loredock.createBeat",
+        "title": "LoreDock: 新建 Beat"
+      },
+      {
+        "command": "loredock.openCodexEntry",
+        "title": "LoreDock: 打开资料卡"
+      },
+      {
+        "command": "loredock.editCodexEntryForm",
+        "title": "LoreDock: 表单编辑资料卡"
+      },
+      {
+        "command": "loredock.filterCodexEntries",
+        "title": "LoreDock: 筛选资料库"
+      },
+      {
+        "command": "loredock.deleteCodexEntry",
+        "title": "LoreDock: 删除资料卡"
+      },
+      {
+        "command": "loredock.showForeshadowingBoard",
+        "title": "LoreDock: 伏笔看板"
+      },
+      {
+        "command": "loredock.showTimelineBoard",
+        "title": "LoreDock: 时间线看板"
+      },
+      {
+        "command": "loredock.showSceneBeatBoard",
+        "title": "LoreDock: 场景 / Beat 看板"
+      },
+      {
+        "command": "loredock.normalizeSceneOrder",
+        "title": "LoreDock: 归一化场景顺序"
+      },
+      {
+        "command": "loredock.normalizeBeatOrder",
+        "title": "LoreDock: 归一化 Beat 顺序"
+      },
+      {
+        "command": "loredock.expandBeat",
+        "title": "LoreDock: 扩写 Beat"
+      },
+      {
+        "command": "loredock.reviewPendingCodexUpdates",
+        "title": "LoreDock: 应用摘要资料建议"
+      },
+      {
+        "command": "loredock.configureAI",
+        "title": "LoreDock: 配置 AI"
+      },
+      {
+        "command": "loredock.configureOpenRouter",
+        "title": "LoreDock: 使用 OpenRouter / 多模型 Key"
+      },
+      {
+        "command": "loredock.configureFromClaudeCli",
+        "title": "LoreDock: 使用 Claude CLI 配置"
+      },
+      {
+        "command": "loredock.selectAIModel",
+        "title": "LoreDock: 选择 AI 模型"
+      },
+      {
+        "command": "loredock.diagnoseAIConfig",
+        "title": "LoreDock: 诊断 AI 配置"
+      },
+      {
+        "command": "loredock.preflightAIRequest",
+        "title": "LoreDock: AI 请求预检"
+      },
+      {
+        "command": "loredock.testAIConnection",
+        "title": "LoreDock: 测试 AI 连接"
+      },
+      {
+        "command": "loredock.openStyleGuide",
+        "title": "LoreDock: 打开文风指南"
+      },
+      {
+        "command": "loredock.configureExportStyle",
+        "title": "LoreDock: 配置导出样式"
+      },
+      {
+        "command": "loredock.setWritingGoals",
+        "title": "LoreDock: 设置写作目标"
+      },
+      {
+        "command": "loredock.importManuscript",
+        "title": "LoreDock: 导入已有手稿"
+      },
+      {
+        "command": "loredock.exportManuscript",
+        "title": "LoreDock: 导出整本书"
+      },
+      {
+        "command": "loredock.showStats",
+        "title": "LoreDock: 显示写作统计"
+      },
+      {
+        "command": "loredock.showAIHistory",
+        "title": "LoreDock: 查看 AI 历史"
+      },
+      {
+        "command": "loredock.continueChapter",
+        "title": "LoreDock: 续写当前章节"
+      },
+      {
+        "command": "loredock.polishSelection",
+        "title": "LoreDock: 润色选中文本"
+      },
+      {
+        "command": "loredock.generateChapterSummary",
+        "title": "LoreDock: 生成章节摘要"
+      },
+      {
+        "command": "loredock.runLocalConsistencyCheck",
+        "title": "LoreDock: 本地一致性检查"
+      },
+      {
+        "command": "loredock.checkConsistency",
+        "title": "LoreDock: 一致性检查"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "loredock.openSettings",
+          "when": "view == loredock.manuscript",
+          "group": "navigation@0"
+        },
+        {
+          "command": "loredock.showManuscriptActions",
+          "when": "view == loredock.manuscript",
+          "group": "navigation@1"
+        },
+        {
+          "command": "loredock.refreshViews",
+          "when": "view == loredock.manuscript",
+          "group": "navigation@2"
+        },
+        {
+          "command": "loredock.openSettings",
+          "when": "view == loredock.codex",
+          "group": "navigation@0"
+        },
+        {
+          "command": "loredock.showCodexActions",
+          "when": "view == loredock.codex",
+          "group": "navigation@1"
+        },
+        {
+          "command": "loredock.refreshViews",
+          "when": "view == loredock.codex",
+          "group": "navigation@2"
+        },
+        {
+          "command": "loredock.openSettings",
+          "when": "view == loredock.aiStatus",
+          "group": "navigation@0"
+        },
+        {
+          "command": "loredock.refreshViews",
+          "when": "view == loredock.aiStatus",
+          "group": "navigation@1"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "loredock.createVolume",
+          "when": "view == loredock.manuscript && viewItem == loredock.project",
+          "group": "inline@1"
+        },
+        {
+          "command": "loredock.deleteProject",
+          "when": "view == loredock.manuscript && viewItem == loredock.project",
+          "group": "4_delete@1"
+        },
+        {
+          "command": "loredock.createChapter",
+          "when": "view == loredock.manuscript && viewItem == loredock.volume",
+          "group": "inline@1"
+        },
+        {
+          "command": "loredock.deleteVolume",
+          "when": "view == loredock.manuscript && viewItem == loredock.volume",
+          "group": "4_delete@1"
+        },
+        {
+          "command": "loredock.openChapter",
+          "when": "view == loredock.manuscript && viewItem == loredock.chapter",
+          "group": "inline@1"
+        },
+        {
+          "command": "loredock.renameChapter",
+          "when": "view == loredock.manuscript && viewItem == loredock.chapter",
+          "group": "2_edit@1"
+        },
+        {
+          "command": "loredock.setChapterStatus",
+          "when": "view == loredock.manuscript && viewItem == loredock.chapter",
+          "group": "2_edit@2"
+        },
+        {
+          "command": "loredock.deleteChapter",
+          "when": "view == loredock.manuscript && viewItem == loredock.chapter",
+          "group": "2_edit@3"
+        },
+        {
+          "command": "loredock.continueChapter",
+          "when": "view == loredock.manuscript && viewItem == loredock.chapter",
+          "group": "3_ai@1"
+        },
+        {
+          "command": "loredock.generateChapterSummary",
+          "when": "view == loredock.manuscript && viewItem == loredock.chapter",
+          "group": "3_ai@2"
+        },
+        {
+          "command": "loredock.runLocalConsistencyCheck",
+          "when": "view == loredock.manuscript && viewItem == loredock.chapter",
+          "group": "3_ai@3"
+        },
+        {
+          "command": "loredock.checkConsistency",
+          "when": "view == loredock.manuscript && viewItem == loredock.chapter",
+          "group": "3_ai@4"
+        },
+        {
+          "command": "loredock.openCodexEntry",
+          "when": "view == loredock.codex && viewItem == loredock.codexEntry",
+          "group": "inline@1"
+        },
+        {
+          "command": "loredock.editCodexEntryForm",
+          "when": "view == loredock.codex && viewItem == loredock.codexEntry",
+          "group": "2_edit@1"
+        },
+        {
+          "command": "loredock.deleteCodexEntry",
+          "when": "view == loredock.codex && viewItem == loredock.codexEntry",
+          "group": "4_delete@1"
+        },
+        {
+          "command": "loredock.createCharacter",
+          "when": "view == loredock.codex && viewItem == loredock.characters",
+          "group": "inline@1"
+        },
+        {
+          "command": "loredock.createLocation",
+          "when": "view == loredock.codex && viewItem == loredock.locations",
+          "group": "inline@1"
+        },
+        {
+          "command": "loredock.createWorldRule",
+          "when": "view == loredock.codex && viewItem == loredock.worldRules",
+          "group": "inline@1"
+        },
+        {
+          "command": "loredock.createForeshadowing",
+          "when": "view == loredock.codex && viewItem == loredock.foreshadowing",
+          "group": "inline@1"
+        },
+        {
+          "command": "loredock.showForeshadowingBoard",
+          "when": "view == loredock.codex && viewItem == loredock.foreshadowing",
+          "group": "2_view@1"
+        },
+        {
+          "command": "loredock.createTimelineEvent",
+          "when": "view == loredock.codex && viewItem == loredock.timeline",
+          "group": "inline@1"
+        },
+        {
+          "command": "loredock.showTimelineBoard",
+          "when": "view == loredock.codex && viewItem == loredock.timeline",
+          "group": "2_view@1"
+        },
+        {
+          "command": "loredock.createScene",
+          "when": "view == loredock.codex && viewItem == loredock.scenes",
+          "group": "inline@1"
+        },
+        {
+          "command": "loredock.showSceneBeatBoard",
+          "when": "view == loredock.codex && viewItem == loredock.scenes",
+          "group": "2_view@1"
+        },
+        {
+          "command": "loredock.normalizeSceneOrder",
+          "when": "view == loredock.codex && viewItem == loredock.scenes",
+          "group": "2_view@2"
+        },
+        {
+          "command": "loredock.createBeat",
+          "when": "view == loredock.codex && viewItem == loredock.beats",
+          "group": "inline@1"
+        },
+        {
+          "command": "loredock.expandBeat",
+          "when": "view == loredock.codex && viewItem == loredock.beats",
+          "group": "inline@2"
+        },
+        {
+          "command": "loredock.showSceneBeatBoard",
+          "when": "view == loredock.codex && viewItem == loredock.beats",
+          "group": "2_view@1"
+        },
+        {
+          "command": "loredock.normalizeBeatOrder",
+          "when": "view == loredock.codex && viewItem == loredock.beats",
+          "group": "2_view@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "loredock.refreshViews",
+          "when": "false"
+        },
+        {
+          "command": "loredock.openSettings",
+          "when": "false"
+        },
+        {
+          "command": "loredock.showManuscriptActions",
+          "when": "false"
+        },
+        {
+          "command": "loredock.showCodexActions",
+          "when": "false"
+        },
+        {
+          "command": "loredock.createVolume",
+          "when": "false"
+        },
+        {
+          "command": "loredock.deleteProject",
+          "when": "false"
+        },
+        {
+          "command": "loredock.deleteVolume",
+          "when": "false"
+        },
+        {
+          "command": "loredock.createChapter",
+          "when": "false"
+        },
+        {
+          "command": "loredock.openChapter",
+          "when": "false"
+        },
+        {
+          "command": "loredock.renameChapter",
+          "when": "false"
+        },
+        {
+          "command": "loredock.setChapterStatus",
+          "when": "false"
+        },
+        {
+          "command": "loredock.deleteChapter",
+          "when": "false"
+        },
+        {
+          "command": "loredock.createCharacter",
+          "when": "false"
+        },
+        {
+          "command": "loredock.createLocation",
+          "when": "false"
+        },
+        {
+          "command": "loredock.createWorldRule",
+          "when": "false"
+        },
+        {
+          "command": "loredock.createForeshadowing",
+          "when": "false"
+        },
+        {
+          "command": "loredock.createTimelineEvent",
+          "when": "false"
+        },
+        {
+          "command": "loredock.createScene",
+          "when": "false"
+        },
+        {
+          "command": "loredock.createBeat",
+          "when": "false"
+        },
+        {
+          "command": "loredock.openCodexEntry",
+          "when": "false"
+        },
+        {
+          "command": "loredock.editCodexEntryForm",
+          "when": "false"
+        },
+        {
+          "command": "loredock.filterCodexEntries",
+          "when": "false"
+        },
+        {
+          "command": "loredock.deleteCodexEntry",
+          "when": "false"
+        },
+        {
+          "command": "loredock.showForeshadowingBoard",
+          "when": "false"
+        },
+        {
+          "command": "loredock.showTimelineBoard",
+          "when": "false"
+        },
+        {
+          "command": "loredock.showSceneBeatBoard",
+          "when": "false"
+        },
+        {
+          "command": "loredock.normalizeSceneOrder",
+          "when": "false"
+        },
+        {
+          "command": "loredock.normalizeBeatOrder",
+          "when": "false"
+        },
+        {
+          "command": "loredock.expandBeat",
+          "when": "false"
+        },
+        {
+          "command": "loredock.reviewPendingCodexUpdates",
+          "when": "false"
+        },
+        {
+          "command": "loredock.configureAI",
+          "when": "false"
+        },
+        {
+          "command": "loredock.configureOpenRouter",
+          "when": "false"
+        },
+        {
+          "command": "loredock.configureFromClaudeCli",
+          "when": "false"
+        },
+        {
+          "command": "loredock.selectAIModel",
+          "when": "false"
+        },
+        {
+          "command": "loredock.diagnoseAIConfig",
+          "when": "false"
+        },
+        {
+          "command": "loredock.preflightAIRequest",
+          "when": "false"
+        },
+        {
+          "command": "loredock.testAIConnection",
+          "when": "false"
+        },
+        {
+          "command": "loredock.openStyleGuide",
+          "when": "false"
+        },
+        {
+          "command": "loredock.configureExportStyle",
+          "when": "false"
+        },
+        {
+          "command": "loredock.setWritingGoals",
+          "when": "false"
+        },
+        {
+          "command": "loredock.importManuscript",
+          "when": "false"
+        },
+        {
+          "command": "loredock.exportManuscript",
+          "when": "false"
+        },
+        {
+          "command": "loredock.showStats",
+          "when": "false"
+        },
+        {
+          "command": "loredock.showAIHistory",
+          "when": "false"
+        },
+        {
+          "command": "loredock.continueChapter",
+          "when": "false"
+        },
+        {
+          "command": "loredock.polishSelection",
+          "when": "false"
+        },
+        {
+          "command": "loredock.generateChapterSummary",
+          "when": "false"
+        },
+        {
+          "command": "loredock.runLocalConsistencyCheck",
+          "when": "false"
+        },
+        {
+          "command": "loredock.checkConsistency",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "LoreDock",
+      "properties": {
+        "loredock.ai.provider": {
+          "type": "string",
+          "default": "openai-compatible",
+          "enum": [
+            "openai-compatible",
+            "openrouter",
+            "lm-studio",
+            "ollama",
+            "deepseek",
+            "custom"
+          ],
+          "description": "AI provider profile. All profiles use an OpenAI-compatible chat completions API."
+        },
+        "loredock.ai.baseUrl": {
+          "type": "string",
+          "default": "http://localhost:1234/v1",
+          "description": "Base URL for the OpenAI-compatible API, without /chat/completions."
+        },
+        "loredock.ai.model": {
+          "type": "string",
+          "default": "",
+          "description": "Model name sent to the AI provider."
+        },
+        "loredock.ai.temperature": {
+          "type": "number",
+          "default": 0.7,
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Default sampling temperature."
+        },
+        "loredock.ai.maxOutputTokens": {
+          "type": "number",
+          "default": 1200,
+          "minimum": 128,
+          "maximum": 16000,
+          "description": "Maximum generated tokens for AI writing tasks."
+        },
+        "loredock.ai.timeoutMs": {
+          "type": "number",
+          "default": 60000,
+          "minimum": 5000,
+          "maximum": 600000,
+          "description": "AI request timeout in milliseconds."
+        },
+        "loredock.ai.defaultLanguage": {
+          "type": "string",
+          "default": "zh-CN",
+          "description": "Default language for AI writing tasks."
+        }
+      }
+    }
+  }
+}

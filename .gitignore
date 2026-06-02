@@ -1,0 +1,21 @@
+node_modules/
+out/
+.vscode-test/
+*.vsix
+.DS_Store
+
+# Local LoreDock novel data and secrets.
+.loredock/
+manuscript/
+codex/
+
+# Generic local secret/config files.
+.env
+.env.*
+!.env.example
+*.local.json
+*.local.jsonc
+*.key
+*.pem
+.claude/
+.config/claude/
