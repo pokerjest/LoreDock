@@ -3,12 +3,9 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { buildContextPackage, filterContextPackage } from '../../core/contextBuilder';
 import { LoreDockStorage } from '../../core/storage';
 import { decodeTextBuffer, slugify } from '../../core/utils';
 import { countWords } from '../../core/wordCount';
-import { anthropicEndpoint, buildChatCompletionPayload, buildClaudePayload, buildGeminiPayload, normalizeApiKey, validateBaseUrl } from '../../services/aiClient';
-import { AISettings, CharacterCard } from '../../types';
 
 test('initializes a local LoreDock project and prevents accidental re-init', async () => {
   const root = await tempRoot();
@@ -86,14 +83,6 @@ test('decodes BOM text and reads BOM-prefixed local files', async () => {
   assert.equal(decodeTextBuffer(Buffer.from([0xfe, 0xff, 0x00, 0x48, 0x00, 0x69])), 'Hi');
 
   const storage = await initializedStorage();
-  await storage.ensureAIConfigFile();
-  await fs.writeFile(storage.resolve('.loredock/ai.env'), '\uFEFFOPENROUTER_API_KEY=sk-router-test\n', 'utf8');
-  assert.equal((await storage.readAIEnv()).OPENROUTER_API_KEY, 'sk-router-test');
-
-  const config = await storage.readAIConfig();
-  await fs.writeFile(storage.resolve('.loredock/ai.local.jsonc'), `\uFEFF${JSON.stringify(config, null, 2)}\n`, 'utf8');
-  assert.equal((await storage.readAIConfig()).activeProvider, config.activeProvider);
-
   const stylePath = await storage.ensureExportStyleFile();
   await fs.writeFile(storage.resolve(stylePath), '\uFEFF{"fontSize": 14}\n', 'utf8');
   assert.equal((await storage.readExportStyle()).fontSize, 14);
@@ -300,7 +289,7 @@ test('imports DOCX manuscript text through the local parser', async () => {
   assert.match((await Promise.all(imported.map((chapter) => fs.readFile(storage.resolve(chapter.filePath), 'utf8')))).join('\n'), /吴烬醒来/);
 });
 
-test('builds reference index across manuscript, chat and snippets while respecting doNotTrack', async () => {
+test('builds reference index across manuscript and plan cards while respecting doNotTrack', async () => {
   const storage = await initializedStorage();
   const chapter = (await storage.requireManifest()).volumes[0].chapters[0];
   await fs.writeFile(storage.resolve(chapter.filePath), '# 第一章\n\n吴烬在王都遇见灰烬这个旧称。\n', 'utf8');
@@ -312,25 +301,8 @@ test('builds reference index across manuscript, chat and snippets while respecti
   const locationEntry = await storage.findCodexEntryById(location.id);
   assert.ok(locationEntry);
   await storage.writeCodexEntry(locationEntry.relativePath, { ...location, doNotTrack: true });
-  await storage.saveChatThread({
-    schemaVersion: 1,
-    id: 'chat-reference',
-    title: '设定讨论',
-    pinned: false,
-    messages: [{ role: 'user', content: '灰烬这个别名会在第一卷频繁出现。' }],
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  });
-  await storage.saveSnippet({
-    schemaVersion: 1,
-    id: 'snippet-reference',
-    title: '人物片段',
-    content: '吴烬总是避开钟楼。',
-    tags: [],
-    sourceRefs: [],
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  });
+  await storage.createScene({ name: '钟楼相遇', detail: '吴烬在钟楼下等待。', chapterId: chapter.id });
+  await storage.createBeat({ name: '旧称刺痛', detail: '灰烬这个别名让吴烬停顿。', chapterId: chapter.id });
 
   const index = await storage.buildReferenceIndex();
   const names = index.occurrences.map((occurrence) => occurrence.cardName);
@@ -338,60 +310,15 @@ test('builds reference index across manuscript, chat and snippets while respecti
 
   assert.ok(names.includes('吴烬'));
   assert.ok(kinds.includes('chapter'));
-  assert.ok(kinds.includes('chat'));
-  assert.ok(kinds.includes('snippet'));
+  assert.ok(kinds.includes('scene'));
+  assert.ok(kinds.includes('beat'));
   assert.equal(names.includes('王都'), false);
   assert.equal((await storage.readReferenceIndex())?.occurrences.length, index.occurrences.length);
 });
 
-test('applies confirmed progressions only after their effective chapter', async () => {
+
+test('round-trips codex zip exports', async () => {
   const storage = await initializedStorage();
-  const manifest = await storage.requireManifest();
-  const first = manifest.volumes[0].chapters[0];
-  const second = await storage.createChapter(manifest.volumes[0].id, '第二章');
-  await fs.writeFile(storage.resolve(first.filePath), '# 第一章\n\n吴烬研究灵能登记制度。\n', 'utf8');
-  await fs.writeFile(storage.resolve(second.filePath), '# 第二章\n\n吴烬回到王都，灵能登记制度开始变化。\n', 'utf8');
-  const rule = await storage.createWorldRule({ name: '灵能登记制度', detail: '三阶以上灵能者必须登记。' });
-  const entry = await storage.findCodexEntryById(rule.id);
-  assert.ok(entry);
-  await storage.writeCodexEntry(entry.relativePath, {
-    ...rule,
-    memoryStatus: 'confirmed',
-    progressions: [
-      {
-        id: 'progression-lockdown',
-        title: '王都戒严',
-        content: '第二章后，王都开始按街区封锁未登记灵能者。',
-        effectiveFromChapterId: second.id,
-        sourceRefs: [{ kind: 'chapter', id: second.id, name: '第二章' }],
-        status: 'confirmed',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      },
-      {
-        id: 'progression-pending',
-        title: '未确认改革',
-        content: '登记制度将在第三章废除。',
-        effectiveFromChapterId: first.id,
-        sourceRefs: [],
-        status: 'pending',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      }
-    ]
-  });
-
-  const firstContext = await buildContextPackage({ storage, chapterId: first.id, taskType: 'continue', userInstruction: '' });
-  const secondContext = await buildContextPackage({ storage, chapterId: second.id, taskType: 'continue', userInstruction: '' });
-
-  assert.doesNotMatch(firstContext.assembledText, /王都开始按街区封锁/);
-  assert.match(secondContext.assembledText, /王都开始按街区封锁/);
-  assert.doesNotMatch(secondContext.assembledText, /第三章废除/);
-});
-
-test('creates prompt library and round-trips codex zip exports', async () => {
-  const storage = await initializedStorage();
-  const prompts = await storage.ensurePromptLibrary();
   await storage.createCharacter({ name: '吴烬', detail: '主角' });
 
   const zipPath = await storage.exportCodexZip();
@@ -399,101 +326,13 @@ test('creates prompt library and round-trips codex zip exports', async () => {
   const target = await initializedStorage();
   const importedCount = await target.importCodexZip(zipBuffer);
 
-  assert.ok(prompts.some((prompt) => prompt.kind === 'continue'));
-  assert.equal((await storage.listPromptTemplates()).length, prompts.length);
   assert.ok(importedCount >= 1);
   assert.equal((await target.listCodexEntries('character')).some((entry) => entry.card.name === '吴烬'), true);
 });
 
-test('lists and clears AI history', async () => {
-  const storage = await initializedStorage();
-  await storage.appendHistory({
-    schemaVersion: 1,
-    id: 'history-one',
-    taskType: 'continue',
-    model: 'test-model',
-    provider: 'openai-compatible',
-    userInstruction: 'test',
-    contextPreview: 'context',
-    output: 'output',
-    action: 'append',
-    createdAt: new Date().toISOString(),
-    latencyMs: 10
-  });
 
-  assert.equal((await storage.listHistory()).length, 1);
 
-  await storage.clearHistory();
 
-  assert.equal((await storage.listHistory()).length, 0);
-});
-
-test('creates local AI config file and updates selected model', async () => {
-  const storage = await initializedStorage();
-  const relativePath = await storage.ensureAIConfigFile();
-
-  assert.equal(relativePath, '.loredock/ai.local.jsonc');
-  assert.ok(await exists(storage.resolve(relativePath)));
-  assert.ok(await exists(storage.resolve('.loredock/ai.env')));
-  const localIgnore = await fs.readFile(storage.resolve('.loredock/.gitignore'), 'utf8');
-  assert.match(localIgnore, /ai\.local\.jsonc/);
-  assert.match(localIgnore, /ai\.env/);
-
-  await fs.writeFile(storage.resolve('.loredock/ai.env'), 'export ANTHROPIC_API_KEY=sk-ant-test\nOPENROUTER_API_KEY="sk-router-test"\n', 'utf8');
-  const envValues = await storage.readAIEnv();
-  assert.equal(envValues.ANTHROPIC_API_KEY, 'sk-ant-test');
-  assert.equal(envValues.OPENROUTER_API_KEY, 'sk-router-test');
-
-  const config = await storage.readAIConfig();
-  assert.equal(config.providers.gpt?.baseUrl, 'https://api.openai.com/v1');
-  assert.equal(config.providers.claude?.apiKeyEnv, 'ANTHROPIC_API_KEY');
-  config.activeProvider = 'gpt';
-  config.providers.gpt = {
-    ...config.providers.gpt,
-    baseUrl: 'https://api.openai.com/v1',
-    model: '',
-    apiKey: 'test-key'
-  };
-  await storage.writeAIConfig(config);
-  await storage.updateActiveAIModel('gpt-test-model');
-
-  assert.equal((await storage.readAIConfig()).providers.gpt?.model, 'gpt-test-model');
-});
-
-test('normalizes API keys copied from env and bearer examples', async () => {
-  const storage = await initializedStorage();
-  await storage.ensureAIConfigFile();
-  await fs.writeFile(
-    storage.resolve('.loredock/ai.env'),
-    'OPENROUTER_API_KEY=Bearer sk-or-v1-test # copied from docs\nANTHROPIC_API_KEY=\"sk-ant-test\"\n',
-    'utf8'
-  );
-
-  const envValues = await storage.readAIEnv();
-
-  assert.equal(envValues.OPENROUTER_API_KEY, 'Bearer sk-or-v1-test');
-  assert.equal(normalizeApiKey(envValues.OPENROUTER_API_KEY), 'sk-or-v1-test');
-  assert.equal(normalizeApiKey(' "Bearer sk-test" '), 'sk-test');
-  assert.equal(envValues.ANTHROPIC_API_KEY, 'sk-ant-test');
-});
-
-test('configures OpenRouter profile for multi-model router keys', async () => {
-  const storage = await initializedStorage();
-  const config = await storage.readAIConfig();
-  config.providers['openai-compatible'] = {
-    ...config.providers['openai-compatible'],
-    baseUrl: 'http://localhost:1234/v1',
-    model: '',
-    apiKey: 'sk-router-test'
-  };
-  await storage.writeAIConfig(config);
-
-  const updated = await storage.configureOpenRouterProfile();
-
-  assert.equal(updated.activeProvider, 'openrouter');
-  assert.equal(updated.providers.openrouter?.baseUrl, 'https://openrouter.ai/api/v1');
-  assert.equal(updated.providers.openrouter?.apiKey, 'sk-router-test');
-});
 
 test('saves pending codex update suggestions from summaries', async () => {
   const storage = await initializedStorage();
@@ -524,150 +363,8 @@ test('saves pending codex update suggestions from summaries', async () => {
   assert.match(await fs.readFile(storage.resolve(relativePath), 'utf8'), /吴烬开始寻找线索/);
 });
 
-test('context assembly includes relevant public codex and excludes hidden secrets', async () => {
-  const storage = await initializedStorage();
-  const chapter = (await storage.requireManifest()).volumes[0].chapters[0];
-  await fs.writeFile(storage.resolve(chapter.filePath), '# 第一章\n\n吴烬在旧城低声说话。\n', 'utf8');
 
-  const character = await storage.createCharacter({ name: '吴烬', detail: '主角' });
-  const [entry] = await storage.listCodexEntries('character');
-  const edited: CharacterCard = {
-    ...character,
-    speechStyle: '短句，少解释。',
-    currentState: '正在寻找线索。',
-    secrets: '他知道幕后真相。',
-    hiddenSecrets: '真正身份不能发送。'
-  };
-  await fs.writeFile(storage.resolve(entry.relativePath), `${JSON.stringify(edited, null, 2)}\n`, 'utf8');
 
-  const context = await buildContextPackage({
-    storage,
-    chapterId: chapter.id,
-    taskType: 'continue',
-    userInstruction: '保持悬念。'
-  });
-
-  assert.match(context.assembledText, /吴烬/);
-  assert.match(context.assembledText, /短句，少解释/);
-  assert.doesNotMatch(context.assembledText, /幕后真相/);
-  assert.doesNotMatch(context.assembledText, /真正身份/);
-
-  const filtered = filterContextPackage(context, ['task', 'project', 'style', 'chapter-tail']);
-  assert.doesNotMatch(filtered.assembledText, /短句，少解释/);
-  assert.match(filtered.omitted.join('\n'), /用户排除/);
-});
-
-test('context includes foreshadowing without hidden truth by default', async () => {
-  const storage = await initializedStorage();
-  const chapter = (await storage.requireManifest()).volumes[0].chapters[0];
-  await fs.writeFile(storage.resolve(chapter.filePath), '# 第一章\n\n吴烬听见锁门声。\n', 'utf8');
-  const card = await storage.createForeshadowing({ name: '锁门声', detail: '反复出现的门锁声。' });
-  const [entry] = await storage.listCodexEntries('foreshadowing');
-  await fs.writeFile(
-    storage.resolve(entry.relativePath),
-    `${JSON.stringify({ ...card, status: 'seeded', publicHint: '门锁声会反复出现', hiddenTruth: '幕后黑手正在隔壁房间', allowRevealToAI: false }, null, 2)}\n`,
-    'utf8'
-  );
-
-  const context = await buildContextPackage({
-    storage,
-    chapterId: chapter.id,
-    taskType: 'continue',
-    userInstruction: ''
-  });
-
-  assert.match(context.assembledText, /锁门声/);
-  assert.match(context.assembledText, /门锁声会反复出现/);
-  assert.doesNotMatch(context.assembledText, /幕后黑手/);
-});
-
-test('context includes structured world memory, relationships, timeline causality and pending inferences', async () => {
-  const storage = await initializedStorage();
-  const chapter = (await storage.requireManifest()).volumes[0].chapters[0];
-  await fs.writeFile(storage.resolve(chapter.filePath), '# 第一章\n\n林凛在王都调查灵能登记制度，吴烬提到旧钟塔爆炸。\n', 'utf8');
-
-  const character = await storage.createCharacter({ name: '林凛', detail: '调查者' });
-  const characterEntry = await storage.findCodexEntryById(character.id);
-  assert.ok(characterEntry);
-  await storage.writeCodexEntry(characterEntry.relativePath, {
-    ...character,
-    memoryStatus: 'confirmed',
-    relationships: [
-      {
-        target: '吴烬',
-        type: '盟友',
-        status: '不稳定',
-        description: '目标一致，但互相隐瞒关键情报。',
-        knownBy: ['林凛']
-      }
-    ],
-    knows: ['监察院隐藏过旧钟塔事故'],
-    doesNotKnow: ['吴烬真实身份'],
-    secrets: '她知道监察院密档编号。',
-    hiddenSecrets: '她本人曾被监察院实验过。',
-    inferences: [
-      {
-        subject: '林凛',
-        field: 'personality',
-        value: '她对官方机构保持戒备。',
-        basis: ['灵能登记制度要求三阶以上必须登记', '旧钟塔爆炸被监察院压下'],
-        confidence: 'high',
-        status: 'pending',
-        sourceRefs: [{ kind: 'world-rule', name: '灵能登记制度' }]
-      }
-    ]
-  });
-
-  const rule = await storage.createWorldRule({ name: '灵能登记制度', detail: '三阶以上灵能者必须登记。' });
-  const ruleEntry = await storage.findCodexEntryById(rule.id);
-  assert.ok(ruleEntry);
-  await storage.writeCodexEntry(ruleEntry.relativePath, {
-    ...rule,
-    memoryStatus: 'confirmed',
-    category: '力量体系 / 政治制度',
-    rules: ['三阶以上必须登记', '未登记灵能者不得进入王都'],
-    scope: ['王国'],
-    relatedCharacters: ['林凛'],
-    relatedFactions: ['王国监察院'],
-    importance: 'absolute'
-  });
-
-  const event = await storage.createTimelineEvent({ name: '旧钟塔爆炸' });
-  const eventEntry = await storage.findCodexEntryById(event.id);
-  assert.ok(eventEntry);
-  await storage.writeCodexEntry(eventEntry.relativePath, {
-    ...event,
-    memoryStatus: 'confirmed',
-    sequence: 12,
-    storyTime: '第一日夜',
-    location: '王都旧钟塔',
-    participants: ['林凛', '王国监察院'],
-    causes: ['监察院非法实验'],
-    consequences: ['王都加强登记制度'],
-    knownBy: ['林凛', '监察院高层'],
-    unknownBy: ['吴烬'],
-    result: '事故被压下，只留下公开谣言。',
-    visibility: 'character-unknown'
-  });
-
-  const context = await buildContextPackage({
-    storage,
-    chapterId: chapter.id,
-    taskType: 'continue',
-    userInstruction: '参考旧钟塔爆炸，但不要让吴烬知道真相。'
-  });
-
-  assert.match(context.assembledText, /力量体系 \/ 政治制度/);
-  assert.match(context.assembledText, /未登记灵能者不得进入王都/);
-  assert.match(context.assembledText, /林凛 -> 吴烬/);
-  assert.match(context.assembledText, /吴烬真实身份/);
-  assert.match(context.assembledText, /AI 推测层/);
-  assert.match(context.assembledText, /她对官方机构保持戒备/);
-  assert.match(context.assembledText, /原因：监察院非法实验/);
-  assert.match(context.assembledText, /不知情者：吴烬/);
-  assert.doesNotMatch(context.assembledText, /密档编号/);
-  assert.doesNotMatch(context.assembledText, /曾被监察院实验/);
-});
 
 test('runs deterministic consistency checks against codex facts', async () => {
   const storage = await initializedStorage();
@@ -695,7 +392,7 @@ test('runs deterministic consistency checks against codex facts', async () => {
     ...foreshadowing,
     status: 'seeded',
     hiddenTruth: '幕后黑手正在隔壁房间',
-    allowRevealToAI: false
+    allowRevealInContext: false
   });
 
   const firstEvent = await storage.createTimelineEvent({ name: '吴烬在旧城' });
@@ -725,64 +422,9 @@ test('runs deterministic consistency checks against codex facts', async () => {
   assert.match(titles, /同一时间出现在多个地点/);
 });
 
-test('builds OpenAI-compatible chat completion payload', () => {
-  const settings: AISettings = {
-    provider: 'openai-compatible',
-    baseUrl: 'http://localhost:1234/v1',
-    model: 'test-model',
-    temperature: 0.4,
-    maxOutputTokens: 512,
-    timeoutMs: 10000,
-    defaultLanguage: 'zh-CN'
-  };
 
-  const payload = buildChatCompletionPayload(settings, {
-    taskType: 'continue',
-    messages: [{ role: 'user', content: '续写' }]
-  });
 
-  assert.equal(payload.model, 'test-model');
-  assert.equal(payload.temperature, 0.4);
-  assert.equal(payload.max_tokens, 512);
-});
 
-test('builds Claude and Gemini payloads', () => {
-  const settings: AISettings = {
-    provider: 'claude',
-    baseUrl: 'https://api.anthropic.com',
-    model: 'claude-test',
-    temperature: 0.2,
-    maxOutputTokens: 256,
-    timeoutMs: 10000,
-    defaultLanguage: 'zh-CN'
-  };
-  const request = {
-    taskType: 'continue' as const,
-    messages: [
-      { role: 'system' as const, content: '系统规则' },
-      { role: 'user' as const, content: '正文' }
-    ]
-  };
-
-  const claude = buildClaudePayload(settings, request);
-  assert.equal(claude.model, 'claude-test');
-  assert.equal(claude.system, '系统规则');
-
-  const gemini = buildGeminiPayload({ ...settings, provider: 'gemini' }, request);
-  assert.deepEqual(gemini.systemInstruction, { parts: [{ text: '系统规则' }] });
-});
-
-test('builds Anthropic endpoints without duplicating /v1', () => {
-  assert.equal(anthropicEndpoint('https://api.anthropic.com', 'messages'), 'https://api.anthropic.com/v1/messages');
-  assert.equal(anthropicEndpoint('https://api.anthropic.com/v1', 'models'), 'https://api.anthropic.com/v1/models');
-});
-
-test('validates AI baseUrl before fetch', () => {
-  assert.doesNotThrow(() => validateBaseUrl('https://openrouter.ai/api/v1'));
-  assert.doesNotThrow(() => validateBaseUrl('http://localhost:1234/v1'));
-  assert.throws(() => validateBaseUrl('openrouter.ai/api/v1'), /完整 URL/);
-  assert.throws(() => validateBaseUrl('ftp://example.com'), /http/);
-});
 
 async function initializedStorage(): Promise<LoreDockStorage> {
   const storage = new LoreDockStorage(await tempRoot());

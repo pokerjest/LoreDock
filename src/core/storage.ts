@@ -2,26 +2,19 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import {
-  AI_CONFIG_FILE,
-  AI_ENV_FILE,
   BEATS_DIR,
   CHARACTERS_DIR,
-  CHAT_DIR,
   CODEX_DIR,
   EXPORTS_DIR,
   EXPORT_STYLE_FILE,
   FORESHADOWING_DIR,
-  HISTORY_DIR,
   LORE_DIR,
-  LOREDOCK_LOCAL_GITIGNORE,
   LOCATIONS_DIR,
   MANUSCRIPT_DIR,
   PENDING_UPDATES_DIR,
-  PROMPTS_DIR,
   PROJECT_FILE,
   REFERENCE_INDEX_FILE,
   SCENES_DIR,
-  SNIPPETS_DIR,
   STYLE_GUIDE_FILE,
   SUMMARY_DIR,
   TIMELINE_DIR,
@@ -30,14 +23,11 @@ import {
 } from './constants';
 import { countWords } from './wordCount';
 import {
-  AIJobRecord,
-  AIConfigFile,
   ChapterMeta,
   ChapterRef,
   ChapterStatus,
   ChapterSummary,
   CharacterCard,
-  ChatThread,
   CodexCard,
   CodexEntry,
   CodexReferenceIndex,
@@ -50,9 +40,7 @@ import {
   LocationCard,
   ProjectInitOptions,
   ProjectManifest,
-  PromptTemplate,
   ScenePlan,
-  Snippet,
   TimelineEvent,
   VolumeMeta,
   WorldRule,
@@ -101,7 +89,6 @@ export class LoreDockStorage {
     }
 
     await this.ensureProjectDirectories();
-    await this.ensureLocalIgnore();
 
     const timestamp = nowIso();
     const volume: VolumeMeta = {
@@ -172,76 +159,6 @@ export class LoreDockStorage {
   public async writeManifest(manifest: ProjectManifest): Promise<void> {
     manifest.updatedAt = nowIso();
     await this.writeJson(PROJECT_FILE, manifest);
-  }
-
-  public async ensureAIConfigFile(): Promise<string> {
-    await this.requireManifest();
-    await this.ensureLocalIgnore();
-    if (!(await this.exists(AI_CONFIG_FILE))) {
-      await fs.writeFile(this.resolve(AI_CONFIG_FILE), defaultAIConfigJsonc(), 'utf8');
-    }
-    await this.ensureAIEnvFile();
-    return AI_CONFIG_FILE;
-  }
-
-  public async ensureAIEnvFile(): Promise<string> {
-    await this.requireManifest();
-    await this.ensureLocalIgnore();
-    if (!(await this.exists(AI_ENV_FILE))) {
-      await fs.writeFile(this.resolve(AI_ENV_FILE), defaultAIEnv(), 'utf8');
-    }
-    return AI_ENV_FILE;
-  }
-
-  public async readAIEnv(): Promise<Record<string, string>> {
-    await this.ensureAIEnvFile();
-    const raw = await fs.readFile(this.resolve(AI_ENV_FILE), 'utf8');
-    return parseEnvFile(raw);
-  }
-
-  public async readAIConfig(): Promise<AIConfigFile> {
-    await this.ensureAIConfigFile();
-    const raw = await fs.readFile(this.resolve(AI_CONFIG_FILE), 'utf8');
-    return JSON.parse(stripJsonComments(stripUtf8Bom(raw))) as AIConfigFile;
-  }
-
-  public async writeAIConfig(config: AIConfigFile): Promise<void> {
-    await this.ensureLocalIgnore();
-    await fs.writeFile(this.resolve(AI_CONFIG_FILE), `${JSON.stringify(config, null, 2)}\n`, 'utf8');
-  }
-
-  public async updateActiveAIModel(model: string): Promise<AIConfigFile> {
-    const config = await this.readAIConfig();
-    const provider = config.activeProvider;
-    const providerConfig = config.providers[provider];
-    if (!providerConfig) {
-      throw new Error(`AI 配置中找不到 activeProvider：${provider}`);
-    }
-    providerConfig.model = model;
-    await this.writeAIConfig(config);
-    return config;
-  }
-
-  public async configureOpenRouterProfile(): Promise<AIConfigFile> {
-    const config = await this.readAIConfig();
-    const existingKey =
-      config.providers.openrouter?.apiKey ||
-      config.providers['openai-compatible']?.apiKey ||
-      config.providers.custom?.apiKey ||
-      config.providers.gpt?.apiKey ||
-      '';
-    config.activeProvider = 'openrouter';
-    config.providers.openrouter = {
-      baseUrl: 'https://openrouter.ai/api/v1',
-      model: config.providers.openrouter?.model ?? '',
-      apiKey: existingKey,
-      apiKeyEnv: config.providers.openrouter?.apiKeyEnv ?? 'OPENROUTER_API_KEY',
-      temperature: config.providers.openrouter?.temperature ?? 0.7,
-      maxOutputTokens: config.providers.openrouter?.maxOutputTokens ?? 1200,
-      timeoutMs: config.providers.openrouter?.timeoutMs ?? 60000
-    };
-    await this.writeAIConfig(config);
-    return config;
   }
 
   public async refreshChapterStats(): Promise<ProjectManifest | undefined> {
@@ -739,7 +656,7 @@ export class LoreDockStorage {
       expectedResolveChapterId: '',
       relatedCharacters: [],
       importance: 'important',
-      allowRevealToAI: false,
+      allowRevealInContext: false,
       publicHint: '',
       hiddenTruth: '',
       createdAt: timestamp,
@@ -1009,12 +926,10 @@ export class LoreDockStorage {
 
   public async buildReferenceIndex(): Promise<CodexReferenceIndex> {
     await this.requireManifest();
-    const [manifest, entries, summaries, chats, snippets] = await Promise.all([
+    const [manifest, entries, summaries] = await Promise.all([
       this.requireManifest(),
       this.listCodexEntries(),
-      this.listSummaries(),
-      this.listChatThreads(),
-      this.listSnippets()
+      this.listSummaries()
     ]);
     const trackable = entries
       .filter((entry) => entry.card.allowInContext !== false && !entry.card.doNotTrack)
@@ -1082,25 +997,6 @@ export class LoreDockStorage {
         text: [card.name, card.summary, card.content, card.purpose].filter(Boolean).join('\n')
       });
     }
-    for (const chat of chats) {
-      sources.push({
-        kind: 'chat',
-        id: chat.id,
-        title: chat.title,
-        relativePath: posixPath(CHAT_DIR, `${chat.id}.json`),
-        text: chat.messages.map((message) => message.content).join('\n')
-      });
-    }
-    for (const snippet of snippets) {
-      sources.push({
-        kind: 'snippet',
-        id: snippet.id,
-        title: snippet.title,
-        relativePath: posixPath(SNIPPETS_DIR, `${snippet.id}.json`),
-        text: snippet.content
-      });
-    }
-
     const occurrences: CodexReferenceOccurrence[] = [];
     for (const source of sources) {
       for (const { entry, names } of trackable) {
@@ -1146,75 +1042,6 @@ export class LoreDockStorage {
     return this.writeCodexEntry(entry.relativePath, { ...entry.card, memoryStatus: status });
   }
 
-  public async listChatThreads(): Promise<ChatThread[]> {
-    return this.listJsonDirectory<ChatThread>(CHAT_DIR, (left, right) => Number(right.pinned) - Number(left.pinned) || right.updatedAt.localeCompare(left.updatedAt));
-  }
-
-  public async saveChatThread(thread: ChatThread): Promise<ChatThread> {
-    await this.requireManifest();
-    const timestamp = nowIso();
-    const normalized: ChatThread = {
-      ...thread,
-      schemaVersion: 1,
-      updatedAt: timestamp,
-      createdAt: thread.createdAt || timestamp
-    };
-    await this.writeJson(posixPath(CHAT_DIR, `${normalized.id}.json`), normalized);
-    return normalized;
-  }
-
-  public async deleteChatThread(threadId: string): Promise<void> {
-    await fs.rm(this.resolve(posixPath(CHAT_DIR, `${threadId}.json`)), { force: true });
-  }
-
-  public async exportChatThreadMarkdown(threadId: string): Promise<string> {
-    const thread = (await this.listChatThreads()).find((candidate) => candidate.id === threadId);
-    if (!thread) {
-      throw new Error(`找不到聊天线程：${threadId}`);
-    }
-    await fs.mkdir(this.resolve(EXPORTS_DIR), { recursive: true });
-    const relativePath = posixPath(EXPORTS_DIR, `${slugify(thread.title)}-${thread.id}.md`);
-    const body = [`# ${thread.title}`, '', ...thread.messages.flatMap((message) => [`## ${message.role}`, '', message.content, ''])].join('\n');
-    await fs.writeFile(this.resolve(relativePath), body.trimEnd() + '\n', 'utf8');
-    return relativePath;
-  }
-
-  public async listSnippets(): Promise<Snippet[]> {
-    return this.listJsonDirectory<Snippet>(SNIPPETS_DIR, (left, right) => right.updatedAt.localeCompare(left.updatedAt));
-  }
-
-  public async saveSnippet(snippet: Snippet): Promise<Snippet> {
-    await this.requireManifest();
-    const timestamp = nowIso();
-    const normalized: Snippet = {
-      ...snippet,
-      schemaVersion: 1,
-      updatedAt: timestamp,
-      createdAt: snippet.createdAt || timestamp
-    };
-    await this.writeJson(posixPath(SNIPPETS_DIR, `${normalized.id}.json`), normalized);
-    return normalized;
-  }
-
-  public async ensurePromptLibrary(): Promise<PromptTemplate[]> {
-    await this.requireManifest();
-    await fs.mkdir(this.resolve(PROMPTS_DIR), { recursive: true });
-    const existing = await this.listPromptTemplates();
-    if (existing.length > 0) {
-      return existing;
-    }
-    const timestamp = nowIso();
-    const defaults = defaultPromptTemplates(timestamp);
-    for (const prompt of defaults) {
-      await this.writeJson(posixPath(PROMPTS_DIR, `${prompt.id}.json`), prompt);
-    }
-    return defaults;
-  }
-
-  public async listPromptTemplates(): Promise<PromptTemplate[]> {
-    return this.listJsonDirectory<PromptTemplate>(PROMPTS_DIR, (left, right) => left.kind.localeCompare(right.kind) || left.title.localeCompare(right.title, 'zh-Hans-CN'));
-  }
-
   public async exportCodexZip(): Promise<string> {
     await this.requireManifest();
     const entries = await this.listCodexEntries();
@@ -1256,7 +1083,7 @@ export class LoreDockStorage {
     const issues: ConsistencyIssue[] = [];
 
     for (const card of cards) {
-      if (card.kind === 'foreshadowing' && card.hiddenTruth && !card.allowRevealToAI && chapterText.includes(card.hiddenTruth)) {
+      if (card.kind === 'foreshadowing' && card.hiddenTruth && !card.allowRevealInContext && chapterText.includes(card.hiddenTruth)) {
         issues.push({
           severity: '严重问题',
           title: `伏笔“${card.name}”隐藏真相提前出现`,
@@ -1329,33 +1156,6 @@ export class LoreDockStorage {
     return issues;
   }
 
-  public async appendHistory(record: AIJobRecord): Promise<void> {
-    await this.writeJson(posixPath(HISTORY_DIR, `${record.id}.json`), record);
-  }
-
-  public async listHistory(limit = 50): Promise<AIJobRecord[]> {
-    const absolute = this.resolve(HISTORY_DIR);
-    try {
-      const entries = await fs.readdir(absolute, { withFileTypes: true });
-      const records = await Promise.all(
-        entries
-          .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
-          .map((entry) => this.readJson<AIJobRecord>(posixPath(HISTORY_DIR, entry.name)))
-      );
-      return records.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return [];
-      }
-      throw error;
-    }
-  }
-
-  public async clearHistory(): Promise<void> {
-    await fs.rm(this.resolve(HISTORY_DIR), { recursive: true, force: true });
-    await fs.mkdir(this.resolve(HISTORY_DIR), { recursive: true });
-  }
-
   public async savePendingCodexUpdates(summary: ChapterSummary): Promise<string | undefined> {
     const lines = [
       `# ${summary.chapterTitle} 资料更新建议`,
@@ -1401,12 +1201,8 @@ export class LoreDockStorage {
       [
         '.loredock',
         SUMMARY_DIR,
-      HISTORY_DIR,
-      PENDING_UPDATES_DIR,
-      CHAT_DIR,
-      SNIPPETS_DIR,
-      PROMPTS_DIR,
-      MANUSCRIPT_DIR,
+        PENDING_UPDATES_DIR,
+        MANUSCRIPT_DIR,
         CODEX_DIR,
         CHARACTERS_DIR,
         LOCATIONS_DIR,
@@ -1417,27 +1213,6 @@ export class LoreDockStorage {
         BEATS_DIR
       ].map((relative) => fs.mkdir(this.resolve(relative), { recursive: true }))
     );
-    await this.ensureLocalIgnore();
-  }
-
-  private async ensureLocalIgnore(): Promise<void> {
-    await fs.mkdir(this.resolve(LORE_DIR), { recursive: true });
-    const ignorePath = this.resolve(LOREDOCK_LOCAL_GITIGNORE);
-    const ignored = ['ai.local.jsonc', 'ai.env'];
-    let current = '';
-    try {
-      current = await fs.readFile(ignorePath, 'utf8');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        throw error;
-      }
-    }
-    const existingLines = current.split(/\r?\n/);
-    const missing = ignored.filter((line) => !existingLines.includes(line));
-    if (missing.length > 0) {
-      const next = current.trim() ? `${current.trimEnd()}\n${missing.join('\n')}\n` : `${missing.join('\n')}\n`;
-      await fs.writeFile(ignorePath, next, 'utf8');
-    }
   }
 
   private async createSampleCodexIfMissing(timestamp: string): Promise<void> {
@@ -1471,8 +1246,8 @@ export class LoreDockStorage {
         doesNotKnow: [],
         relationshipNotes: '',
         currentState: '在这里记录最新状态。',
-        secrets: '普通续写默认不会发送此字段。',
-        hiddenSecrets: '普通续写默认不会发送此字段。',
+        secrets: '默认不纳入结构上下文。',
+        hiddenSecrets: '默认不纳入结构上下文。',
         forbiddenActions: ['不要提前说出隐藏秘密。'],
         createdAt: timestamp,
         updatedAt: timestamp
@@ -1617,139 +1392,6 @@ function formatSuggestionList(values: string[]): string[] {
   return values.map((value) => `- ${value}`);
 }
 
-function defaultAIConfigJsonc(): string {
-  return `{
-  // 当前使用的供应商：gpt / claude / gemini / openai-compatible / openrouter / lm-studio / ollama / deepseek / custom
-  // 如果你的一个 sk 开头 key 可以选择 GPT、Claude、DeepSeek 等很多模型，它通常是模型路由平台 key。
-  // 这种情况请使用 "openrouter" 或 "openai-compatible"，不要使用原生 "claude"。
-  // API key 可以直接写在 provider.apiKey，也可以写在 .loredock/ai.env。
-  "schemaVersion": 1,
-  "activeProvider": "openai-compatible",
-  "defaultLanguage": "zh-CN",
-  "providers": {
-    "gpt": {
-      "baseUrl": "https://api.openai.com/v1",
-      "model": "",
-      "apiKey": "",
-      "apiKeyEnv": "OPENAI_API_KEY",
-      "temperature": 0.7,
-      "maxOutputTokens": 1200,
-      "timeoutMs": 60000
-    },
-    "claude": {
-      // 可以写 "https://api.anthropic.com"，也可以写 "https://api.anthropic.com/v1"
-      // Anthropic 控制台 API key 通常以 "sk-ant-" 开头。
-      "baseUrl": "https://api.anthropic.com",
-      "model": "",
-      "apiKey": "",
-      "apiKeyEnv": "ANTHROPIC_API_KEY",
-      "temperature": 0.7,
-      "maxOutputTokens": 1200,
-      "timeoutMs": 60000
-    },
-    "anthropic": {
-      // "anthropic" 是 "claude" 的别名；如果你更习惯 Anthropic 这个名字，可以把 activeProvider 写成 "anthropic"。
-      "baseUrl": "https://api.anthropic.com",
-      "model": "",
-      "apiKey": "",
-      "apiKeyEnv": "ANTHROPIC_API_KEY",
-      "temperature": 0.7,
-      "maxOutputTokens": 1200,
-      "timeoutMs": 60000
-    },
-    "gemini": {
-      "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
-      "model": "",
-      "apiKey": "",
-      "apiKeyEnv": "GEMINI_API_KEY",
-      "temperature": 0.7,
-      "maxOutputTokens": 1200,
-      "timeoutMs": 60000
-    },
-    "openai-compatible": {
-      "baseUrl": "http://localhost:1234/v1",
-      "model": "",
-      "apiKey": "",
-      "apiKeyEnv": "",
-      "temperature": 0.7,
-      "maxOutputTokens": 1200,
-      "timeoutMs": 60000
-    },
-    "openrouter": {
-      // OpenRouter 这类模型路由平台可以用一个 key 访问 GPT、Claude、DeepSeek 等模型。
-      // 模型名通常类似 "openai/gpt-4.1"、"anthropic/claude-sonnet-4"、"deepseek/deepseek-chat"。
-      "baseUrl": "https://openrouter.ai/api/v1",
-      "model": "",
-      "apiKey": "",
-      "apiKeyEnv": "OPENROUTER_API_KEY",
-      "temperature": 0.7,
-      "maxOutputTokens": 1200,
-      "timeoutMs": 60000
-    },
-    "lm-studio": {
-      "baseUrl": "http://localhost:1234/v1",
-      "model": "",
-      "apiKey": "",
-      "apiKeyEnv": "",
-      "temperature": 0.7,
-      "maxOutputTokens": 1200,
-      "timeoutMs": 60000
-    },
-    "ollama": {
-      "baseUrl": "http://localhost:11434/v1",
-      "model": "",
-      "apiKey": "",
-      "apiKeyEnv": "",
-      "temperature": 0.7,
-      "maxOutputTokens": 1200,
-      "timeoutMs": 60000
-    },
-    "deepseek": {
-      "baseUrl": "https://api.deepseek.com/v1",
-      "model": "",
-      "apiKey": "",
-      "apiKeyEnv": "DEEPSEEK_API_KEY",
-      "temperature": 0.7,
-      "maxOutputTokens": 1200,
-      "timeoutMs": 60000
-    },
-    "custom": {
-      "baseUrl": "",
-      "model": "",
-      "apiKey": "",
-      "apiKeyEnv": "",
-      "temperature": 0.7,
-      "maxOutputTokens": 1200,
-      "timeoutMs": 60000
-    }
-  }
-}
-`;
-}
-
-function defaultAIEnv(): string {
-  return `# LoreDock 本地 AI key。这个文件会被 .loredock/.gitignore 忽略。
-# 在等号后填写 key，通常不需要加引号。
-
-# Anthropic 原生 Claude key，通常以 sk-ant- 开头。
-ANTHROPIC_API_KEY=
-
-# OpenRouter 或其他多模型路由 key。
-# 如果你的 sk key 可以同时选择 GPT、Claude、DeepSeek，请优先填这里。
-# OpenRouter 官方 key 常见形态：sk-or-v1-...
-OPENROUTER_API_KEY=
-
-# OpenAI 原生 key。
-OPENAI_API_KEY=
-
-# Google Gemini key。
-GEMINI_API_KEY=
-
-# DeepSeek key。
-DEEPSEEK_API_KEY=
-`;
-}
-
 function defaultExportStyle(): ExportStyle {
   return {
     schemaVersion: 1,
@@ -1819,52 +1461,6 @@ function stripJsonComments(input: string): string {
     output += char;
   }
   return output;
-}
-
-function parseEnvFile(input: string): Record<string, string> {
-  const values: Record<string, string> = {};
-  for (const line of stripUtf8Bom(input).split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) {
-      continue;
-    }
-    const equalsIndex = trimmed.indexOf('=');
-    if (equalsIndex === -1) {
-      continue;
-    }
-    const key = trimmed.slice(0, equalsIndex).trim().replace(/^export\s+/, '');
-    let value = trimmed.slice(equalsIndex + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    } else {
-      value = stripInlineEnvComment(value).trim();
-    }
-    if (key) {
-      values[key] = value;
-    }
-  }
-  return values;
-}
-
-function stripInlineEnvComment(value: string): string {
-  let inSingleQuote = false;
-  let inDoubleQuote = false;
-  for (let index = 0; index < value.length; index += 1) {
-    const char = value[index];
-    const previous = value[index - 1];
-    if (char === "'" && !inDoubleQuote) {
-      inSingleQuote = !inSingleQuote;
-      continue;
-    }
-    if (char === '"' && !inSingleQuote) {
-      inDoubleQuote = !inDoubleQuote;
-      continue;
-    }
-    if (char === '#' && !inSingleQuote && !inDoubleQuote && (!previous || /\s/.test(previous))) {
-      return value.slice(0, index);
-    }
-  }
-  return value;
 }
 
 function stripLeadingHeading(input: string, title: string): string {
@@ -2245,47 +1841,6 @@ function excerptAround(text: string, index: number, length: number): string {
   const start = Math.max(0, index - 42);
   const end = Math.min(text.length, index + length + 42);
   return text.slice(start, end).replace(/\s+/g, ' ').trim();
-}
-
-function defaultPromptTemplates(timestamp: string): PromptTemplate[] {
-  return [
-    {
-      schemaVersion: 1,
-      id: 'prompt-continue-default',
-      title: '默认续写',
-      kind: 'continue',
-      description: '根据当前章节末尾、相关资料库和用户要求续写正文。',
-      system: '你是 LoreDock 的长篇小说续写引擎。只输出正文，保持文风、人物状态、世界规则和时间线一致。',
-      user: '{{context}}\n\n请续写当前章节。额外要求：{{instruction}}',
-      tags: ['内置', '正文'],
-      createdAt: timestamp,
-      updatedAt: timestamp
-    },
-    {
-      schemaVersion: 1,
-      id: 'prompt-polish-default',
-      title: '默认润色',
-      kind: 'polish',
-      description: '润色选中文本，保留事实和剧情结果。',
-      system: '你是 LoreDock 的局部润色引擎。只输出改写后的正文。',
-      user: '{{context}}\n\n请润色选中文本。润色要求：{{instruction}}',
-      tags: ['内置', '润色'],
-      createdAt: timestamp,
-      updatedAt: timestamp
-    },
-    {
-      schemaVersion: 1,
-      id: 'prompt-worldbuild-review',
-      title: '世界观审查',
-      kind: 'worldbuild',
-      description: '检查世界观、角色关系和事件因果是否缺口明显。',
-      system: '你是长篇小说世界观编辑。请区分正史、推测和待确认问题。',
-      user: '{{context}}\n\n请列出关键矛盾、缺口、可确认问题和建议更新的资料卡。',
-      tags: ['内置', '世界观'],
-      createdAt: timestamp,
-      updatedAt: timestamp
-    }
-  ];
 }
 
 function isNegatedRuleMentioned(chapterText: string, ruleContent: string): boolean {

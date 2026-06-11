@@ -109,14 +109,14 @@ function commonFields(): Field[] {
     { key: 'name', label: '名称', type: 'text' },
     { key: 'aliases', label: '别名（逗号分隔）', type: 'array' },
     { key: 'tags', label: '标签（逗号分隔）', type: 'array' },
-    { key: 'allowInContext', label: '允许进入 AI 上下文', type: 'checkbox' },
-    { key: 'alwaysIncludeInContext', label: '总是进入 AI 上下文', type: 'checkbox' },
+    { key: 'allowInContext', label: '允许纳入结构上下文', type: 'checkbox' },
+    { key: 'alwaysIncludeInContext', label: '总是纳入结构上下文', type: 'checkbox' },
     { key: 'doNotTrack', label: '不要按名称/别名自动追踪', type: 'checkbox' },
     { key: 'nestedRefs', label: '嵌套引用资料卡 ID/名称（逗号分隔）', type: 'array' },
     { key: 'memoryStatus', label: '记忆状态', type: 'select', options: ['draft', 'pending', 'confirmed', 'deprecated'] },
     { key: 'summary', label: '一句话摘要', type: 'textarea' },
     { key: 'sourceRefs', label: '来源引用 JSON', type: 'json' },
-    { key: 'inferences', label: 'AI 推测 JSON', type: 'json' },
+    { key: 'inferences', label: '待确认推测 JSON', type: 'json' },
     { key: 'progressions', label: 'Progressions/Additions JSON', type: 'json' }
   ];
 }
@@ -137,7 +137,7 @@ function fieldsForKind(kind: CodexCard['kind']): Field[] {
       { key: 'relationshipNotes', label: '关系网备注', type: 'textarea' },
       { key: 'currentState', label: '当前状态', type: 'textarea' },
       { key: 'secrets', label: '普通秘密', type: 'textarea' },
-      { key: 'hiddenSecrets', label: '隐藏秘密（普通续写默认不发送）', type: 'textarea' },
+      { key: 'hiddenSecrets', label: '隐藏秘密（默认不纳入上下文）', type: 'textarea' },
       { key: 'forbiddenActions', label: '禁止事项（逗号分隔）', type: 'array' }
     ];
   }
@@ -180,7 +180,7 @@ function fieldsForKind(kind: CodexCard['kind']): Field[] {
       { key: 'relatedCharacters', label: '相关人物（逗号分隔）', type: 'array' },
       { key: 'publicHint', label: '可公开提示', type: 'textarea' },
       { key: 'hiddenTruth', label: '隐藏真相', type: 'textarea' },
-      { key: 'allowRevealToAI', label: '允许 AI 看到隐藏真相', type: 'checkbox' }
+      { key: 'allowRevealInContext', label: '允许上下文包含隐藏真相', type: 'checkbox' }
     ];
   }
   if (kind === 'timeline-event') {

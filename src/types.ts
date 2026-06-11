@@ -7,20 +7,6 @@ export type ChapterStatus =
   | 'complete'
   | 'abandoned';
 
-export type AIProvider =
-  | 'gpt'
-  | 'claude'
-  | 'anthropic'
-  | 'gemini'
-  | 'openai-compatible'
-  | 'openrouter'
-  | 'lm-studio'
-  | 'ollama'
-  | 'deepseek'
-  | 'custom';
-
-export type AITaskType = 'continue' | 'polish' | 'summary' | 'consistency' | 'worldbuild' | 'extract' | 'test';
-
 export interface ProjectManifest {
   schemaVersion: 1;
   title: string;
@@ -202,7 +188,7 @@ export interface ForeshadowingCard extends BaseCodexCard {
   expectedResolveChapterId?: string;
   relatedCharacters: string[];
   importance: WorldRuleImportance;
-  allowRevealToAI: boolean;
+  allowRevealInContext: boolean;
   publicHint: string;
   hiddenTruth: string;
 }
@@ -266,77 +252,12 @@ export interface ChapterSummary {
   updatedAt: string;
 }
 
-export interface AISettings {
-  provider: AIProvider;
-  baseUrl: string;
-  model: string;
-  temperature: number;
-  maxOutputTokens: number;
-  timeoutMs: number;
-  defaultLanguage: string;
-}
-
-export interface AIProviderConfig {
-  baseUrl: string;
-  model: string;
-  apiKey?: string;
-  apiKeyEnv?: string;
-  temperature?: number;
-  maxOutputTokens?: number;
-  timeoutMs?: number;
-}
-
-export interface AIConfigFile {
-  schemaVersion: 1;
-  activeProvider: AIProvider;
-  defaultLanguage: string;
-  providers: Partial<Record<AIProvider, AIProviderConfig>>;
-}
-
-export interface AIMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-}
-
-export interface AIRequest {
-  taskType: AITaskType;
-  messages: AIMessage[];
-  temperature?: number;
-  maxTokens?: number;
-}
-
-export interface AIResponse {
-  content: string;
-  model?: string;
-  latencyMs: number;
-  raw?: unknown;
-}
-
-export interface ContextSection {
-  id: string;
-  title: string;
-  body: string;
-  priority: number;
-  alwaysInclude?: boolean;
-  reason?: string;
-}
-
-export interface ContextPackage {
-  taskType: AITaskType;
-  chapterId?: string;
-  title: string;
-  userInstruction: string;
-  sections: ContextSection[];
-  omitted: string[];
-  assembledText: string;
-}
-
 export interface CodexReferenceOccurrence {
   cardId: string;
   cardName: string;
   cardKind: CodexCard['kind'];
   matchedText: string;
-  sourceKind: 'chapter' | 'summary' | 'scene' | 'beat' | 'chat' | 'snippet';
+  sourceKind: 'chapter' | 'summary' | 'scene' | 'beat';
   sourceId: string;
   sourceTitle: string;
   relativePath?: string;
@@ -347,45 +268,6 @@ export interface CodexReferenceIndex {
   schemaVersion: 1;
   generatedAt: string;
   occurrences: CodexReferenceOccurrence[];
-}
-
-export interface ChatThread {
-  schemaVersion: 1;
-  id: string;
-  title: string;
-  pinned: boolean;
-  messages: AIMessage[];
-  draft?: unknown;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface Snippet {
-  schemaVersion: 1;
-  id: string;
-  title: string;
-  content: string;
-  tags: string[];
-  sourceRefs: CodexSourceRef[];
-  createdAt: string;
-  updatedAt: string;
-}
-
-export type PromptTemplateKind = 'continue' | 'polish' | 'summary' | 'consistency' | 'worldbuild' | 'extract' | 'beat' | 'chat';
-
-export interface PromptTemplate {
-  schemaVersion: 1;
-  id: string;
-  title: string;
-  kind: PromptTemplateKind;
-  description: string;
-  system: string;
-  user: string;
-  defaultModel?: string;
-  temperature?: number;
-  tags: string[];
-  createdAt: string;
-  updatedAt: string;
 }
 
 export interface ExportStyle {
@@ -412,22 +294,6 @@ export interface ConsistencyIssue {
   detail: string;
   source: string;
   suggestion: string;
-}
-
-export interface AIJobRecord {
-  schemaVersion: 1;
-  id: string;
-  taskType: AITaskType;
-  chapterId?: string;
-  chapterTitle?: string;
-  model: string;
-  provider: AIProvider;
-  userInstruction: string;
-  contextPreview: string;
-  output: string;
-  action: 'append' | 'insert' | 'replace' | 'copy' | 'save-summary' | 'discard' | 'test' | 'none';
-  createdAt: string;
-  latencyMs: number;
 }
 
 export interface WritingStats {

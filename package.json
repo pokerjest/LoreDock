@@ -1,7 +1,7 @@
 {
   "name": "loredock-vscode",
   "displayName": "LoreDock",
-  "description": "Local-first AI writing workspace for long-form fiction.",
+  "description": "Local-first writing workspace for long-form fiction structure.",
   "version": "0.2.0",
   "publisher": "pokerjest",
   "license": "MIT",
@@ -16,7 +16,6 @@
   "keywords": [
     "novel",
     "writing",
-    "ai",
     "fiction",
     "loredock"
   ],
@@ -32,29 +31,15 @@
     "onView:loredock.codex",
     "onCommand:loredock.initProject",
     "onCommand:loredock.openSettings",
-    "onCommand:loredock.showAIModelPicker",
-    "onCommand:loredock.selectAIModel",
-    "onCommand:loredock.openCreativeAssistant",
     "onCommand:loredock.openPlanView",
     "onCommand:loredock.importOutlineToPlan",
     "onCommand:loredock.rebuildReferenceIndex",
     "onCommand:loredock.showReferenceIndex",
-    "onCommand:loredock.openPromptLibrary",
-    "onCommand:loredock.previewPromptTemplate",
-    "onCommand:loredock.showChatThreads",
-    "onCommand:loredock.saveSelectionAsSnippet",
     "onCommand:loredock.exportCodexZip",
     "onCommand:loredock.importCodexZip",
-    "onCommand:loredock.reviewPendingInferences",
-    "onCommand:loredock.configureAI",
-    "onCommand:loredock.diagnoseAIConfig",
     "onCommand:loredock.openStyleGuide",
     "onCommand:loredock.importManuscript",
-    "onCommand:loredock.exportManuscript",
-    "onCommand:loredock.continueChapter",
-    "onCommand:loredock.polishSelection",
-    "onCommand:loredock.generateChapterSummary",
-    "onCommand:loredock.checkConsistency"
+    "onCommand:loredock.exportManuscript"
   ],
   "main": "./out/extension.js",
   "scripts": {
@@ -216,16 +201,8 @@
         "title": "LoreDock: 归一化 Beat 顺序"
       },
       {
-        "command": "loredock.expandBeat",
-        "title": "LoreDock: 扩写 Beat"
-      },
-      {
         "command": "loredock.reviewPendingCodexUpdates",
         "title": "LoreDock: 应用摘要资料建议"
-      },
-      {
-        "command": "loredock.openCreativeAssistant",
-        "title": "LoreDock: 创作助手"
       },
       {
         "command": "loredock.openPlanView",
@@ -244,64 +221,12 @@
         "title": "LoreDock: 查看引用索引"
       },
       {
-        "command": "loredock.openPromptLibrary",
-        "title": "LoreDock: 打开 Prompt Library"
-      },
-      {
-        "command": "loredock.previewPromptTemplate",
-        "title": "LoreDock: 预览 Prompt"
-      },
-      {
-        "command": "loredock.showChatThreads",
-        "title": "LoreDock: 聊天线程"
-      },
-      {
-        "command": "loredock.saveSelectionAsSnippet",
-        "title": "LoreDock: 保存选区为 Snippet"
-      },
-      {
         "command": "loredock.exportCodexZip",
         "title": "LoreDock: 导出资料库 ZIP"
       },
       {
         "command": "loredock.importCodexZip",
         "title": "LoreDock: 导入资料库 ZIP"
-      },
-      {
-        "command": "loredock.reviewPendingInferences",
-        "title": "LoreDock: 处理 AI 推测"
-      },
-      {
-        "command": "loredock.configureAI",
-        "title": "LoreDock: 配置 AI"
-      },
-      {
-        "command": "loredock.configureOpenRouter",
-        "title": "LoreDock: 使用 OpenRouter / 多模型 Key"
-      },
-      {
-        "command": "loredock.configureFromClaudeCli",
-        "title": "LoreDock: 使用 Claude CLI 配置"
-      },
-      {
-        "command": "loredock.selectAIModel",
-        "title": "LoreDock: 选择 AI 模型"
-      },
-      {
-        "command": "loredock.showAIModelPicker",
-        "title": "LoreDock: 显示 AI 模型选择"
-      },
-      {
-        "command": "loredock.diagnoseAIConfig",
-        "title": "LoreDock: 诊断 AI 配置"
-      },
-      {
-        "command": "loredock.preflightAIRequest",
-        "title": "LoreDock: AI 请求预检"
-      },
-      {
-        "command": "loredock.testAIConnection",
-        "title": "LoreDock: 测试 AI 连接"
       },
       {
         "command": "loredock.openStyleGuide",
@@ -328,28 +253,8 @@
         "title": "LoreDock: 显示写作统计"
       },
       {
-        "command": "loredock.showAIHistory",
-        "title": "LoreDock: 查看 AI 历史"
-      },
-      {
-        "command": "loredock.continueChapter",
-        "title": "LoreDock: 续写当前章节"
-      },
-      {
-        "command": "loredock.polishSelection",
-        "title": "LoreDock: 润色选中文本"
-      },
-      {
-        "command": "loredock.generateChapterSummary",
-        "title": "LoreDock: 生成章节摘要"
-      },
-      {
         "command": "loredock.runLocalConsistencyCheck",
         "title": "LoreDock: 本地一致性检查"
-      },
-      {
-        "command": "loredock.checkConsistency",
-        "title": "LoreDock: 一致性检查"
       }
     ],
     "menus": {
@@ -426,26 +331,11 @@
           "when": "view == loredock.manuscript && viewItem == loredock.chapter",
           "group": "2_edit@3"
         },
-        {
-          "command": "loredock.continueChapter",
-          "when": "view == loredock.manuscript && viewItem == loredock.chapter",
-          "group": "3_ai@1"
-        },
-        {
-          "command": "loredock.generateChapterSummary",
-          "when": "view == loredock.manuscript && viewItem == loredock.chapter",
-          "group": "3_ai@2"
-        },
-        {
-          "command": "loredock.runLocalConsistencyCheck",
-          "when": "view == loredock.manuscript && viewItem == loredock.chapter",
-          "group": "3_ai@3"
-        },
-        {
-          "command": "loredock.checkConsistency",
-          "when": "view == loredock.manuscript && viewItem == loredock.chapter",
-          "group": "3_ai@4"
-        },
+      {
+        "command": "loredock.runLocalConsistencyCheck",
+        "when": "view == loredock.manuscript && viewItem == loredock.chapter",
+        "group": "3_check@1"
+      },
         {
           "command": "loredock.openCodexEntry",
           "when": "view == loredock.codex && viewItem == loredock.codexEntry",
@@ -515,11 +405,6 @@
           "command": "loredock.createBeat",
           "when": "view == loredock.codex && viewItem == loredock.beats",
           "group": "inline@1"
-        },
-        {
-          "command": "loredock.expandBeat",
-          "when": "view == loredock.codex && viewItem == loredock.beats",
-          "group": "inline@2"
         },
         {
           "command": "loredock.showSceneBeatBoard",
@@ -646,35 +531,7 @@
           "when": "false"
         },
         {
-          "command": "loredock.expandBeat",
-          "when": "false"
-        },
-        {
           "command": "loredock.reviewPendingCodexUpdates",
-          "when": "false"
-        },
-        {
-          "command": "loredock.configureAI",
-          "when": "false"
-        },
-        {
-          "command": "loredock.configureOpenRouter",
-          "when": "false"
-        },
-        {
-          "command": "loredock.configureFromClaudeCli",
-          "when": "false"
-        },
-        {
-          "command": "loredock.selectAIModel",
-          "when": "false"
-        },
-        {
-          "command": "loredock.showAIModelPicker",
-          "when": "false"
-        },
-        {
-          "command": "loredock.openCreativeAssistant",
           "when": "false"
         },
         {
@@ -694,43 +551,11 @@
           "when": "false"
         },
         {
-          "command": "loredock.openPromptLibrary",
-          "when": "false"
-        },
-        {
-          "command": "loredock.previewPromptTemplate",
-          "when": "false"
-        },
-        {
-          "command": "loredock.showChatThreads",
-          "when": "false"
-        },
-        {
-          "command": "loredock.saveSelectionAsSnippet",
-          "when": "false"
-        },
-        {
           "command": "loredock.exportCodexZip",
           "when": "false"
         },
         {
           "command": "loredock.importCodexZip",
-          "when": "false"
-        },
-        {
-          "command": "loredock.reviewPendingInferences",
-          "when": "false"
-        },
-        {
-          "command": "loredock.diagnoseAIConfig",
-          "when": "false"
-        },
-        {
-          "command": "loredock.preflightAIRequest",
-          "when": "false"
-        },
-        {
-          "command": "loredock.testAIConnection",
           "when": "false"
         },
         {
@@ -758,84 +583,10 @@
           "when": "false"
         },
         {
-          "command": "loredock.showAIHistory",
-          "when": "false"
-        },
-        {
-          "command": "loredock.continueChapter",
-          "when": "false"
-        },
-        {
-          "command": "loredock.polishSelection",
-          "when": "false"
-        },
-        {
-          "command": "loredock.generateChapterSummary",
-          "when": "false"
-        },
-        {
           "command": "loredock.runLocalConsistencyCheck",
-          "when": "false"
-        },
-        {
-          "command": "loredock.checkConsistency",
           "when": "false"
         }
       ]
-    },
-    "configuration": {
-      "title": "LoreDock",
-      "properties": {
-        "loredock.ai.provider": {
-          "type": "string",
-          "default": "openai-compatible",
-          "enum": [
-            "openai-compatible",
-            "openrouter",
-            "lm-studio",
-            "ollama",
-            "deepseek",
-            "custom"
-          ],
-          "description": "AI provider profile. All profiles use an OpenAI-compatible chat completions API."
-        },
-        "loredock.ai.baseUrl": {
-          "type": "string",
-          "default": "http://localhost:1234/v1",
-          "description": "Base URL for the OpenAI-compatible API, without /chat/completions."
-        },
-        "loredock.ai.model": {
-          "type": "string",
-          "default": "",
-          "description": "Model name sent to the AI provider."
-        },
-        "loredock.ai.temperature": {
-          "type": "number",
-          "default": 0.7,
-          "minimum": 0,
-          "maximum": 2,
-          "description": "Default sampling temperature."
-        },
-        "loredock.ai.maxOutputTokens": {
-          "type": "number",
-          "default": 1200,
-          "minimum": 128,
-          "maximum": 16000,
-          "description": "Maximum generated tokens for AI writing tasks."
-        },
-        "loredock.ai.timeoutMs": {
-          "type": "number",
-          "default": 60000,
-          "minimum": 5000,
-          "maximum": 600000,
-          "description": "AI request timeout in milliseconds."
-        },
-        "loredock.ai.defaultLanguage": {
-          "type": "string",
-          "default": "zh-CN",
-          "description": "Default language for AI writing tasks."
-        }
-      }
     }
   }
 }
