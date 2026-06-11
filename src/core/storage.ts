@@ -22,7 +22,7 @@ import {
   SCENES_DIR,
   STYLE_GUIDE_FILE,
   SUMMARY_DIR,
-  TIMELINE_DOCUMENT_FILE,
+  TIMELINE_STORE_FILE,
   TIMELINE_WORKSPACE_DIR,
   WORLD_RULES_DIR,
   WRITING_GOALS_FILE
@@ -73,10 +73,14 @@ import {
   TimelineDocument,
   TimelineEvent,
   TimelineConflict,
+  TimelineIndexDocument,
   TimelineLane,
+  TimelineMeta,
+  TimelineOriginStatus,
   TimelineResolvedEvent,
   TimelineResolvedView,
   TimelinePoint,
+  TimelineStoreDocument,
   VolumeMeta,
   WorldRule,
   WritingGoals,
@@ -132,6 +136,16 @@ interface LegacyTimelineCard {
   visibility?: TimelineEvent['visibility'];
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface CreateTimelineDocumentInput {
+  title: string;
+  calendarName?: string;
+  eraLabel?: string;
+  worldCreatedAt?: string;
+  note?: string;
+  parentTimelineId?: string;
+  originEventId?: string;
 }
 
 const CODEX_DIRECTORIES: Array<{ kind: CodexCard['kind']; directory: string }> = [
@@ -1356,10 +1370,9 @@ export class LoreDockStorage {
     return card;
   }
 
-  public async createTimelineEvent(input: CreateCodexInput): Promise<TimelineEvent> {
+  public async createTimelineEvent(input: CreateCodexInput, timelineId?: string): Promise<TimelineEvent> {
     const timestamp = nowIso();
-    await this.migrateLegacyTimelineEvents();
-    const document = await this.readTimelineDocument();
+    const document = await this.readTimelineDocument(timelineId);
     const event: TimelineEvent = {
       schemaVersion: 1,
       id: makeId('timeline'),
@@ -1394,58 +1407,201 @@ export class LoreDockStorage {
     return event;
   }
 
-  public async readTimelineDocument(): Promise<TimelineDocument> {
-    await this.migrateLegacyTimelineEvents();
-    if (await this.exists(TIMELINE_DOCUMENT_FILE)) {
-      return this.readJson<TimelineDocument>(TIMELINE_DOCUMENT_FILE);
-    }
+  public async createTimelineDocument(input: CreateTimelineDocumentInput): Promise<TimelineDocument> {
     const timestamp = nowIso();
+    const store = await this.readTimelineStore();
+    const parentTimelineId = input.parentTimelineId?.trim();
+    const originEventId = input.originEventId?.trim();
+    let parentId: string | undefined;
+    let origin: TimelineDocument['origin'];
+
+    if (parentTimelineId || originEventId) {
+      if (!parentTimelineId || !originEventId) {
+        throw new Error('创建子时间线需要同时选择父时间线和父级起点事件。');
+      }
+      const parent = store.timelines.find((candidate) => candidate.id === parentTimelineId);
+      if (!parent) {
+        throw new Error(`找不到父时间线：${parentTimelineId}`);
+      }
+      const byId = new Map(store.timelines.map((document) => [document.id, document]));
+      if (timelineWouldCreateCycle('', parent.id, byId)) {
+        throw new Error('创建子时间线会形成时间线循环。');
+      }
+      const originEvent = parent.events.find((event) => event.id === originEventId);
+      if (!originEvent) {
+        throw new Error(`父时间线中不存在起点事件 ${originEventId}。`);
+      }
+      parentId = parent.id;
+      origin = {
+        parentTimelineId: parent.id,
+        parentEventId: originEvent.id,
+        parentSortValue: originEvent.start.sortValue,
+        childSortValue: 0,
+        label: originEvent.title
+      };
+    }
+
     const document: TimelineDocument = {
       schemaVersion: 1,
-      id: 'timeline-main',
-      title: '故事时间线',
+      id: makeId('timeline-doc'),
+      title: input.title.trim() || '新时间线',
+      parentId,
+      origin,
       calendar: {
-        worldCreatedAt: '',
-        calendarName: '自由日历',
-        eraLabel: '',
-        note: ''
+        worldCreatedAt: input.worldCreatedAt ?? '',
+        calendarName: input.calendarName?.trim() || input.title.trim() || '自由日历',
+        eraLabel: input.eraLabel ?? '',
+        note: input.note ?? ''
       },
       events: [],
       createdAt: timestamp,
       updatedAt: timestamp
     };
-    await this.writeTimelineDocument(document);
+    await this.writeTimelineStore({ ...store, activeTimelineId: document.id, timelines: [...store.timelines, document] });
+    return this.readTimelineDocument(document.id);
+  }
+
+  public async readTimelineIndex(): Promise<TimelineIndexDocument> {
+    return timelineIndexFromStore(await this.readTimelineStore());
+  }
+
+  public async setActiveTimeline(timelineId: string): Promise<TimelineIndexDocument> {
+    const store = await this.readTimelineStore();
+    const document = store.timelines.find((candidate) => candidate.id === timelineId);
+    if (!document) {
+      throw new Error(`找不到时间线：${timelineId}`);
+    }
+    return timelineIndexFromStore(await this.writeTimelineStore({ ...store, activeTimelineId: document.id }));
+  }
+
+  public async reanchorTimeline(timelineId: string, parentTimelineId: string, originEventId: string): Promise<TimelineDocument> {
+    if (timelineId === parentTimelineId) {
+      throw new Error('时间线不能以自己作为父级。');
+    }
+    const documents = await this.listTimelineDocuments();
+    const byId = new Map(documents.map((document) => [document.id, document]));
+    const document = byId.get(timelineId) ?? await this.readTimelineDocument(timelineId);
+    const parent = byId.get(parentTimelineId) ?? await this.readTimelineDocument(parentTimelineId);
+    if (timelineWouldCreateCycle(document.id, parent.id, byId)) {
+      throw new Error('重选起点会形成时间线循环。');
+    }
+    const originEvent = parent.events.find((event) => event.id === originEventId);
+    if (!originEvent) {
+      throw new Error(`父时间线中不存在起点事件 ${originEventId}。`);
+    }
+    return this.writeTimelineDocument({
+      ...document,
+      parentId: parent.id,
+      origin: {
+        parentTimelineId: parent.id,
+        parentEventId: originEvent.id,
+        parentSortValue: originEvent.start.sortValue,
+        childSortValue: document.origin?.childSortValue ?? 0,
+        label: originEvent.title
+      }
+    });
+  }
+
+  public async syncTimelineOrigin(timelineId: string): Promise<TimelineDocument> {
+    const document = await this.readTimelineDocument(timelineId);
+    if (!document.origin) {
+      return document;
+    }
+    const parent = await this.readTimelineDocument(document.origin.parentTimelineId);
+    const originEvent = parent.events.find((event) => event.id === document.origin?.parentEventId);
+    if (!originEvent) {
+      throw new Error(`父时间线中不存在起点事件 ${document.origin.parentEventId}。`);
+    }
+    return this.writeTimelineDocument({
+      ...document,
+      origin: {
+        ...document.origin,
+        parentSortValue: originEvent.start.sortValue,
+        label: originEvent.title
+      }
+    });
+  }
+
+  public async deleteTimelineDocument(timelineId: string): Promise<TimelineIndexDocument> {
+    const id = timelineId.trim();
+    if (!id) {
+      throw new Error('Timeline id is required.');
+    }
+
+    const store = await this.readTimelineStore();
+    const documents = store.timelines;
+    const document = documents.find((candidate) => candidate.id === id);
+    if (!document) {
+      throw new Error(`找不到时间线：${id}`);
+    }
+    const remaining = documents
+      .filter((candidate) => candidate.id !== id)
+      .map((candidate) => candidate.parentId === id || candidate.origin?.parentTimelineId === id
+        ? { ...candidate, parentId: undefined, origin: undefined }
+        : candidate);
+    const remainingIds = new Set(remaining.map((candidate) => candidate.id));
+    const fallbackActiveTimelineId = store.activeTimelineId === id
+      ? document.parentId && remainingIds.has(document.parentId)
+        ? document.parentId
+        : remaining[0]?.id
+      : store.activeTimelineId && remainingIds.has(store.activeTimelineId)
+        ? store.activeTimelineId
+        : remaining[0]?.id;
+
+    return timelineIndexFromStore(await this.writeTimelineStore({
+      ...store,
+      activeTimelineId: fallbackActiveTimelineId,
+      timelines: remaining
+    }));
+  }
+
+  public async listTimelineDocuments(): Promise<TimelineDocument[]> {
+    return (await this.readTimelineStore()).timelines;
+  }
+
+  private async listTimelineDocumentsIfExists(): Promise<TimelineDocument[]> {
+    const store = await this.readTimelineStoreIfExists();
+    return store?.timelines ?? [];
+  }
+
+  public async readTimelineDocument(timelineId?: string): Promise<TimelineDocument> {
+    const store = await this.readTimelineStore();
+    const id = timelineId || store.activeTimelineId || store.timelines[0]?.id;
+    if (!id) {
+      throw new Error('请先创建时间线。');
+    }
+    const document = store.timelines.find((candidate) => candidate.id === id);
+    if (!document) {
+      throw new Error(`找不到时间线：${id}`);
+    }
     return document;
   }
 
-  public async readTimelineDocumentIfExists(): Promise<TimelineDocument | undefined> {
-    if (!(await this.exists(TIMELINE_DOCUMENT_FILE))) {
+  public async readTimelineDocumentIfExists(timelineId?: string): Promise<TimelineDocument | undefined> {
+    const store = await this.readTimelineStoreIfExists();
+    const id = timelineId || store?.activeTimelineId || store?.timelines[0]?.id;
+    if (!id) {
       return undefined;
     }
-    return this.readJson<TimelineDocument>(TIMELINE_DOCUMENT_FILE);
+    return store?.timelines.find((candidate) => candidate.id === id);
   }
 
   public async writeTimelineDocument(document: TimelineDocument): Promise<TimelineDocument> {
-    const normalized: TimelineDocument = {
-      ...document,
-      schemaVersion: 1,
-      id: document.id || 'timeline-main',
-      title: document.title || '故事时间线',
-      calendar: {
-        worldCreatedAt: document.calendar?.worldCreatedAt ?? '',
-        calendarName: document.calendar?.calendarName || '自由日历',
-        eraLabel: document.calendar?.eraLabel ?? '',
-        note: document.calendar?.note ?? ''
-      },
-      events: document.events.map((event) => normalizeTimelineEvent(event)),
-      updatedAt: nowIso()
-    };
-    await this.writeJson(TIMELINE_DOCUMENT_FILE, normalized);
+    const store = await this.readTimelineStore();
+    const normalized = normalizeTimelineDocument({ ...document, updatedAt: nowIso() });
+    const exists = store.timelines.some((candidate) => candidate.id === normalized.id);
+    await this.writeTimelineStore({
+      ...store,
+      activeTimelineId: normalized.id,
+      timelines: exists
+        ? store.timelines.map((candidate) => candidate.id === normalized.id ? normalized : candidate)
+        : [...store.timelines, normalized]
+    });
     return normalized;
   }
 
-  public async updateTimelineEvent(event: TimelineEvent): Promise<TimelineEvent> {
-    const document = await this.readTimelineDocument();
+  public async updateTimelineEvent(event: TimelineEvent, timelineId?: string): Promise<TimelineEvent> {
+    const document = await this.readTimelineDocument(timelineId);
     const updated = normalizeTimelineEvent({ ...event, updatedAt: nowIso() });
     const events = document.events.map((item) => item.id === updated.id ? updated : item);
     if (!events.some((item) => item.id === updated.id)) {
@@ -1455,8 +1611,8 @@ export class LoreDockStorage {
     return updated;
   }
 
-  public async updateTimelineEvents(events: TimelineEvent[]): Promise<TimelineDocument> {
-    const document = await this.readTimelineDocument();
+  public async updateTimelineEvents(events: TimelineEvent[], timelineId?: string): Promise<TimelineDocument> {
+    const document = await this.readTimelineDocument(timelineId);
     const byId = new Map(events.map((event) => [event.id, normalizeTimelineEvent({ ...event, updatedAt: nowIso() })]));
     const nextEvents = document.events.map((event) => byId.get(event.id) ?? event);
     for (const event of byId.values()) {
@@ -1467,8 +1623,8 @@ export class LoreDockStorage {
     return this.writeTimelineDocument({ ...document, events: nextEvents });
   }
 
-  public async moveTimelineEvents(updates: Array<{ id: string; startSortValue: number; endSortValue?: number }>): Promise<TimelineDocument> {
-    const document = await this.readTimelineDocument();
+  public async moveTimelineEvents(updates: Array<{ id: string; startSortValue: number; endSortValue?: number }>, timelineId?: string): Promise<TimelineDocument> {
+    const document = await this.readTimelineDocument(timelineId);
     const byId = new Map(updates.map((update) => [update.id, update]));
     return this.writeTimelineDocument({
       ...document,
@@ -1492,75 +1648,135 @@ export class LoreDockStorage {
     });
   }
 
-  public async getTimelineResolvedView(): Promise<TimelineResolvedView> {
-    const [document, entries, refs] = await Promise.all([
-      this.readTimelineDocument(),
+  public async getTimelineResolvedView(timelineId?: string): Promise<TimelineResolvedView> {
+    const [store, entries, refs] = await Promise.all([
+      this.readTimelineStore(),
       this.listCodexEntries(),
       this.getFlatChapterRefs()
     ]);
-    const conflicts = analyzeTimelineConflicts(document.events, entries, refs);
+    const documents = store.timelines;
+    const index = timelineIndexFromStore(store);
+    const targetId = timelineId || store.activeTimelineId;
+    const document = (targetId ? documents.find((candidate) => candidate.id === targetId) : undefined) ?? documents[0];
+    if (!document) {
+      return {
+        index: { ...index, activeTimelineId: undefined },
+        activeTimelineId: undefined,
+        hasTimeline: false,
+        activeTimelineOffset: 0,
+        ancestorTimelineIds: [],
+        originStatus: { status: 'root', message: '暂无时间线' },
+        document: undefined,
+        lanes: buildTimelineLanes([], entries, refs),
+        events: [],
+        conflicts: []
+      };
+    }
+    const byId = new Map(documents.map((candidate) => [candidate.id, candidate]));
+    const ancestors = timelineAncestors(document, byId).reverse();
+    const activeOffset = timelineAbsoluteOffset(document, byId);
+    const currentEvents = document.events.map((event) => timelineResolvedEvent(event, {
+      document,
+      entries,
+      refs,
+      offset: activeOffset,
+      isReference: false
+    }));
+    const referenceEvents = ancestors.flatMap((ancestor) => {
+      const offset = timelineAbsoluteOffset(ancestor, byId);
+      return ancestor.events.map((event) => timelineResolvedEvent(event, {
+        document: ancestor,
+        entries,
+        refs,
+        offset,
+        isReference: true
+      }));
+    });
+    const conflicts = [
+      ...analyzeTimelineConflicts(document.events, entries, refs),
+      ...analyzeTimelineReferenceConflicts(currentEvents, referenceEvents, entries)
+    ];
     const conflictIdsByEvent = new Map<string, string[]>();
     for (const conflict of conflicts) {
       for (const eventId of conflict.eventIds) {
         conflictIdsByEvent.set(eventId, [...(conflictIdsByEvent.get(eventId) ?? []), conflict.id]);
       }
     }
-    const resolved = document.events.map((event): TimelineResolvedEvent => ({
-      ...event,
-      resolvedLocation: resolveTimelineLocation(event, entries),
-      resolvedParticipants: resolveTimelineParticipants(event, entries),
-      resolvedChapter: refs.find((ref) => ref.chapter.id === event.chapterId) ? chapterRefTitle(refs.find((ref) => ref.chapter.id === event.chapterId)!) : undefined,
-      resolvedScene: resolveCodexName(event.sceneId, 'scene', entries),
-      resolvedBeat: resolveCodexName(event.beatId, 'beat', entries),
-      conflictIds: conflictIdsByEvent.get(event.id) ?? []
-    }));
+    const visibleEvents = [...referenceEvents, ...currentEvents].map((event) => ({ ...event, conflictIds: conflictIdsByEvent.get(event.id) ?? [] }));
     return {
+      index: { ...index, activeTimelineId: document.id },
+      activeTimelineId: document.id,
+      hasTimeline: true,
+      activeTimelineOffset: activeOffset,
+      ancestorTimelineIds: ancestors.map((ancestor) => ancestor.id),
+      originStatus: timelineOriginStatus(document, byId),
       document,
-      lanes: buildTimelineLanes(document.events, entries, refs),
-      events: resolved,
+      lanes: buildTimelineLanes(visibleEvents, entries, refs),
+      events: visibleEvents,
       conflicts
     };
   }
 
-  public async analyzeTimelineConflicts(): Promise<TimelineConflict[]> {
-    const [document, entries, refs] = await Promise.all([
-      this.readTimelineDocument(),
+  public async analyzeTimelineConflicts(timelineId?: string): Promise<TimelineConflict[]> {
+    const document = await this.readTimelineDocumentIfExists(timelineId);
+    if (!document) {
+      return [];
+    }
+    const [entries, refs] = await Promise.all([
       this.listCodexEntries(),
       this.getFlatChapterRefs()
     ]);
     return analyzeTimelineConflicts(document.events, entries, refs);
   }
 
-  public async deleteTimelineEvent(eventId: string): Promise<void> {
-    const document = await this.readTimelineDocument();
+  public async deleteTimelineEvent(eventId: string, timelineId?: string): Promise<void> {
+    const document = await this.readTimelineDocument(timelineId);
     await this.writeTimelineDocument({ ...document, events: document.events.filter((event) => event.id !== eventId) });
   }
 
+  private async readTimelineStore(): Promise<TimelineStoreDocument> {
+    const existing = await this.readTimelineStoreIfExists();
+    if (existing) {
+      return existing;
+    }
+    await this.resetTimelineFilesForV3();
+    return this.writeTimelineStore(emptyTimelineStore());
+  }
+
+  private async readTimelineStoreIfExists(): Promise<TimelineStoreDocument | undefined> {
+    if (!(await this.exists(TIMELINE_STORE_FILE))) {
+      return undefined;
+    }
+    return normalizeTimelineStore(await this.readJson<TimelineStoreDocument>(TIMELINE_STORE_FILE));
+  }
+
+  private async writeTimelineStore(store: TimelineStoreDocument): Promise<TimelineStoreDocument> {
+    const normalized = normalizeTimelineStore({ ...store, updatedAt: nowIso() });
+    await this.writeJson(TIMELINE_STORE_FILE, normalized);
+    return normalized;
+  }
+
+  private async resetTimelineFilesForV3(): Promise<void> {
+    await fs.mkdir(this.resolve(TIMELINE_WORKSPACE_DIR), { recursive: true });
+    try {
+      const entries = await fs.readdir(this.resolve(TIMELINE_WORKSPACE_DIR), { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name === path.basename(TIMELINE_STORE_FILE)) {
+          continue;
+        }
+        await fs.rm(path.join(this.resolve(TIMELINE_WORKSPACE_DIR), entry.name), { recursive: true, force: true });
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
+    }
+    await fs.rm(this.resolve(LEGACY_TIMELINE_DIR), { recursive: true, force: true });
+  }
+
   public async migrateLegacyTimelineEvents(): Promise<number> {
-    if (await this.exists(TIMELINE_DOCUMENT_FILE)) {
-      return 0;
-    }
-    const legacyEntries = await this.listLegacyTimelineEntries();
-    if (legacyEntries.length === 0) {
-      return 0;
-    }
-    const timestamp = nowIso();
-    const document: TimelineDocument = {
-      schemaVersion: 1,
-      id: 'timeline-main',
-      title: '故事时间线',
-      calendar: {
-        worldCreatedAt: '',
-        calendarName: '自由日历',
-        eraLabel: '',
-        note: '由旧资料库时间线迁移生成。'
-      },
-      events: legacyEntries.map(({ card }) => legacyCodexTimelineToEvent(card)),
-      createdAt: timestamp,
-      updatedAt: timestamp
-    };
-    await this.writeTimelineDocument(document);
-    return legacyEntries.length;
+    await this.readTimelineStore();
+    return 0;
   }
 
   public async listLegacyTimelineEntries(): Promise<Array<{ card: LegacyTimelineCard; relativePath: string }>> {
@@ -2010,21 +2226,10 @@ export class LoreDockStorage {
       }
     }
 
-    const legacyTimelineEntries = await this.listLegacyTimelineEntries();
-    if (legacyTimelineEntries.length > 0) {
-      addIssue({
-        severity: 'info',
-        category: 'timeline',
-        title: '发现旧资料库时间线数据',
-        detail: `codex/timeline 中仍有 ${legacyTimelineEntries.length} 个旧事件文件。`,
-        source: LEGACY_TIMELINE_DIR,
-        suggestion: '打开时间线工作台会迁移到 .loredock/timeline；确认无误后可清理旧目录。'
-      });
-    }
-
-    const timelineDocument = await this.readTimelineDocumentIfExists();
-    const timelineEvents = timelineDocument?.events ?? legacyTimelineEntries.map(({ card }) => legacyCodexTimelineToEvent(card));
-    const timelineEntries = timelineEvents.map((event) => ({ card: event, relativePath: timelineDocument ? TIMELINE_DOCUMENT_FILE : LEGACY_TIMELINE_DIR }));
+    const timelineDocuments = await this.listTimelineDocumentsIfExists();
+    const timelineEvents = timelineDocuments.flatMap((document) => document.events);
+    const timelineEntries = timelineDocuments.flatMap((document) => document.events.map((event) => ({ card: event, relativePath: timelineDocumentSource(document) })));
+    addTimelineStructureIssues(timelineDocuments, addIssue);
     for (const entry of timelineEntries) {
       const missing = [
         !entry.card.start.label.trim() ? '开始时间' : '',
@@ -2048,7 +2253,7 @@ export class LoreDockStorage {
         category: 'timeline',
         title: conflict.title,
         detail: conflict.detail,
-        source: timelineDocument ? `${TIMELINE_DOCUMENT_FILE}#${conflict.eventIds.join(',')}` : LEGACY_TIMELINE_DIR,
+        source: timelineSourceForConflict(conflict, timelineDocuments),
         suggestion: timelineSuggestionForConflict(conflict)
       });
     }
@@ -3274,6 +3479,111 @@ function addStructureQualityIssues(
   }
 }
 
+function addTimelineStructureIssues(timelineDocuments: TimelineDocument[], addIssue: (issue: ProjectHealthIssue) => void): void {
+  const byId = new Map(timelineDocuments.map((document) => [document.id, document]));
+  for (const document of timelineDocuments) {
+    const source = timelineDocumentSource(document);
+    if (document.parentId && !byId.has(document.parentId)) {
+      addIssue({
+        severity: 'warning',
+        category: 'timeline',
+        title: '时间线父级不存在',
+        detail: `时间线「${document.title}」指向不存在的父时间线 ${document.parentId}。`,
+        source,
+        suggestion: '重新绑定有效父时间线，或清空父级关系。'
+      });
+    }
+    if (document.parentId && !document.origin) {
+      addIssue({
+        severity: 'warning',
+        category: 'timeline',
+        title: '子时间线缺少起点锚定',
+        detail: `时间线「${document.title}」有父级，但没有 origin 起点锚定。`,
+        source,
+        suggestion: '为子时间线选择父级起点事件。'
+      });
+    }
+    if (document.parentId && document.origin && document.parentId !== document.origin.parentTimelineId) {
+      addIssue({
+        severity: 'warning',
+        category: 'timeline',
+        title: '时间线父级与起点来源不一致',
+        detail: `时间线「${document.title}」的 parentId 是 ${document.parentId}，但 origin.parentTimelineId 是 ${document.origin.parentTimelineId}。`,
+        source,
+        suggestion: '在时间线工作台中使用“重选起点”统一父级和起点来源。'
+      });
+    }
+    if (document.origin) {
+      const parent = byId.get(document.origin.parentTimelineId);
+      const originEvent = parent?.events.find((event) => event.id === document.origin?.parentEventId);
+      if (!originEvent) {
+        addIssue({
+          severity: 'warning',
+          category: 'timeline',
+          title: '时间线起点事件不存在',
+          detail: `时间线「${document.title}」的父级起点事件 ${document.origin.parentEventId} 不存在。`,
+          source,
+          suggestion: '在时间线工作台中点击“重选起点”，重新选择存在的父级事件。'
+        });
+      } else if (originEvent.start.sortValue !== document.origin.parentSortValue) {
+        addIssue({
+          severity: 'warning',
+          category: 'timeline',
+          title: '时间线起点排序值不一致',
+          detail: `时间线「${document.title}」记录的父级起点排序值为 ${document.origin.parentSortValue}，但父事件当前排序值为 ${originEvent.start.sortValue}。`,
+          source,
+          suggestion: '在时间线工作台中点击“同步锚点排序值”，或用“重选起点”改到新的父级事件。'
+        });
+      }
+    }
+    if (timelineHasCycle(document, byId)) {
+      addIssue({
+        severity: 'warning',
+        category: 'timeline',
+        title: '时间线形成循环',
+        detail: `时间线「${document.title}」的父级链路形成循环。`,
+        source,
+        suggestion: '调整父子关系，确保时间线是一棵树。'
+      });
+    }
+  }
+}
+
+function timelineHasCycle(document: TimelineDocument, byId: Map<string, TimelineDocument>): boolean {
+  const seen = new Set<string>();
+  let current: TimelineDocument | undefined = document;
+  while (current?.parentId) {
+    if (seen.has(current.id)) {
+      return true;
+    }
+    seen.add(current.id);
+    current = byId.get(current.parentId);
+  }
+  return false;
+}
+
+function timelineWouldCreateCycle(timelineId: string, parentTimelineId: string, byId: Map<string, TimelineDocument>): boolean {
+  let current: TimelineDocument | undefined = byId.get(parentTimelineId);
+  const seen = new Set<string>([timelineId]);
+  while (current) {
+    if (seen.has(current.id)) {
+      return true;
+    }
+    seen.add(current.id);
+    current = current.parentId ? byId.get(current.parentId) : undefined;
+  }
+  return false;
+}
+
+function timelineDocumentSource(document: TimelineDocument): string {
+  return `${TIMELINE_STORE_FILE}#${document.id}`;
+}
+
+function timelineSourceForConflict(conflict: TimelineConflict, documents: TimelineDocument[]): string {
+  const document = documents.find((candidate) => candidate.events.some((event) => conflict.eventIds.includes(event.id)));
+  return document ? `${timelineDocumentSource(document)}#${conflict.eventIds.join(',')}` : TIMELINE_STORE_FILE;
+}
+
 function addBlueprintHealthIssues(
   blueprints: BlueprintDocument[],
   context: {
@@ -3975,6 +4285,253 @@ function legacyCodexTimelineToEvent(card: LegacyTimelineCard): TimelineEvent {
   });
 }
 
+function emptyTimelineStore(): TimelineStoreDocument {
+  return {
+    schemaVersion: 3,
+    activeTimelineId: undefined,
+    timelines: [],
+    updatedAt: nowIso()
+  };
+}
+
+function normalizeTimelineStore(store: Partial<TimelineStoreDocument>): TimelineStoreDocument {
+  const timelines = (store.timelines ?? []).map((document) => normalizeTimelineDocument(document));
+  const activeTimelineId = store.activeTimelineId && timelines.some((document) => document.id === store.activeTimelineId)
+    ? store.activeTimelineId
+    : timelines[0]?.id;
+  const normalized: TimelineStoreDocument = {
+    schemaVersion: 3,
+    activeTimelineId,
+    timelines,
+    updatedAt: store.updatedAt || nowIso()
+  };
+  if (!normalized.activeTimelineId) {
+    delete normalized.activeTimelineId;
+  }
+  return normalized;
+}
+
+function timelineIndexFromStore(store: TimelineStoreDocument): TimelineIndexDocument {
+  const byId = new Map(store.timelines.map((document) => [document.id, document]));
+  const timelines = store.timelines
+    .map((document) => timelineMetaForDocument(document))
+    .sort((a, b) => timelineDepth(a.id, byId) - timelineDepth(b.id, byId) || a.title.localeCompare(b.title, 'zh-Hans-CN'));
+  const index: TimelineIndexDocument = {
+    schemaVersion: 1,
+    activeTimelineId: store.activeTimelineId && timelines.some((timeline) => timeline.id === store.activeTimelineId)
+      ? store.activeTimelineId
+      : timelines[0]?.id,
+    timelines,
+    updatedAt: store.updatedAt
+  };
+  if (!index.activeTimelineId) {
+    delete index.activeTimelineId;
+  }
+  return index;
+}
+
+function normalizeTimelineDocument(document: TimelineDocument): TimelineDocument {
+  const timestamp = document.updatedAt || nowIso();
+  const normalized: TimelineDocument = {
+    ...document,
+    schemaVersion: 1,
+    id: document.id || makeId('timeline-doc'),
+    title: document.title || '故事时间线',
+    parentId: document.parentId || undefined,
+    origin: document.origin
+      ? {
+        parentTimelineId: document.origin.parentTimelineId,
+        parentEventId: document.origin.parentEventId,
+        parentSortValue: Number.isFinite(document.origin.parentSortValue) ? Number(document.origin.parentSortValue) : 0,
+        childSortValue: Number.isFinite(document.origin.childSortValue) ? Number(document.origin.childSortValue) : 0,
+        label: document.origin.label ?? ''
+      }
+      : undefined,
+    calendar: {
+      worldCreatedAt: document.calendar?.worldCreatedAt ?? '',
+      calendarName: document.calendar?.calendarName || '自由日历',
+      eraLabel: document.calendar?.eraLabel ?? '',
+      note: document.calendar?.note ?? ''
+    },
+    events: (document.events ?? []).map((event) => normalizeTimelineEvent(event)),
+    createdAt: document.createdAt || timestamp,
+    updatedAt: timestamp
+  };
+  if (!normalized.parentId) {
+    delete normalized.parentId;
+  }
+  if (!normalized.origin) {
+    delete normalized.origin;
+  }
+  return normalized;
+}
+
+function emptyTimelineDocument(): TimelineDocument {
+  const timestamp = nowIso();
+  return {
+    schemaVersion: 1,
+    id: '',
+    title: '',
+    calendar: {
+      worldCreatedAt: '',
+      calendarName: '',
+      eraLabel: '',
+      note: ''
+    },
+    events: [],
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+}
+
+function timelineMetaForDocument(document: TimelineDocument): TimelineMeta {
+  return {
+    id: document.id,
+    title: document.title,
+    parentId: document.parentId,
+    calendarName: document.calendar.calendarName,
+    eventCount: document.events.length,
+    updatedAt: document.updatedAt
+  };
+}
+
+function timelineDepth(timelineId: string, byId: Map<string, TimelineDocument>): number {
+  let depth = 0;
+  let current = byId.get(timelineId);
+  const seen = new Set<string>();
+  while (current?.parentId && !seen.has(current.id)) {
+    seen.add(current.id);
+    depth += 1;
+    current = byId.get(current.parentId);
+  }
+  return depth;
+}
+
+function timelineAncestors(document: TimelineDocument, byId: Map<string, TimelineDocument>): TimelineDocument[] {
+  const ancestors: TimelineDocument[] = [];
+  const seen = new Set<string>([document.id]);
+  let current = document;
+  while (current.parentId) {
+    const parent = byId.get(current.parentId);
+    if (!parent || seen.has(parent.id)) {
+      break;
+    }
+    ancestors.push(parent);
+    seen.add(parent.id);
+    current = parent;
+  }
+  return ancestors;
+}
+
+function timelineAbsoluteOffset(document: TimelineDocument, byId: Map<string, TimelineDocument>): number {
+  let offset = 0;
+  let current = document;
+  const seen = new Set<string>();
+  while (current.parentId && current.origin && !seen.has(current.id)) {
+    seen.add(current.id);
+    offset += current.origin.parentSortValue - current.origin.childSortValue;
+    const parent = byId.get(current.parentId);
+    if (!parent) {
+      break;
+    }
+    current = parent;
+  }
+  return offset;
+}
+
+function timelineOriginStatus(document: TimelineDocument, byId: Map<string, TimelineDocument>): TimelineOriginStatus {
+  if (!document.parentId && !document.origin) {
+    return { status: 'root', message: '根时间线' };
+  }
+  if (timelineHasCycle(document, byId)) {
+    return {
+      status: 'cycle',
+      parentTimelineId: document.parentId,
+      parentEventId: document.origin?.parentEventId,
+      recordedParentSortValue: document.origin?.parentSortValue,
+      childSortValue: document.origin?.childSortValue,
+      message: '父级链路形成循环'
+    };
+  }
+  const parentId = document.origin?.parentTimelineId || document.parentId;
+  if (!parentId) {
+    return { status: 'missing-parent', message: '缺少父时间线' };
+  }
+  const parent = byId.get(parentId);
+  if (!parent) {
+    return {
+      status: 'missing-parent',
+      parentTimelineId: parentId,
+      parentEventId: document.origin?.parentEventId,
+      recordedParentSortValue: document.origin?.parentSortValue,
+      childSortValue: document.origin?.childSortValue,
+      message: '父时间线不存在'
+    };
+  }
+  const parentEventId = document.origin?.parentEventId;
+  if (!parentEventId) {
+    return {
+      status: 'missing-event',
+      parentTimelineId: parent.id,
+      parentTimelineTitle: parent.title,
+      childSortValue: document.origin?.childSortValue,
+      message: '缺少父级起点事件'
+    };
+  }
+  const parentEvent = parent.events.find((event) => event.id === parentEventId);
+  if (!parentEvent) {
+    return {
+      status: 'missing-event',
+      parentTimelineId: parent.id,
+      parentTimelineTitle: parent.title,
+      parentEventId,
+      recordedParentSortValue: document.origin?.parentSortValue,
+      childSortValue: document.origin?.childSortValue,
+      message: '父级起点事件不存在'
+    };
+  }
+  const recorded = document.origin?.parentSortValue ?? parentEvent.start.sortValue;
+  const current = parentEvent.start.sortValue;
+  return {
+    status: recorded === current ? 'ok' : 'drifted',
+    parentTimelineId: parent.id,
+    parentTimelineTitle: parent.title,
+    parentEventId: parentEvent.id,
+    parentEventTitle: parentEvent.title,
+    recordedParentSortValue: recorded,
+    currentParentSortValue: current,
+    childSortValue: document.origin?.childSortValue ?? 0,
+    message: recorded === current ? '起点锚定正常' : '父级起点排序值已变化'
+  };
+}
+
+function timelineResolvedEvent(
+  event: TimelineEvent,
+  context: {
+    document: TimelineDocument;
+    entries: CodexEntry[];
+    refs: ChapterRef[];
+    offset: number;
+    isReference: boolean;
+  }
+): TimelineResolvedEvent {
+  const resolvedChapter = context.refs.find((ref) => ref.chapter.id === event.chapterId);
+  return {
+    ...event,
+    timelineId: context.document.id,
+    timelineTitle: context.document.title,
+    absoluteStartSortValue: context.offset + event.start.sortValue,
+    absoluteEndSortValue: event.end ? context.offset + event.end.sortValue : undefined,
+    isReference: context.isReference,
+    resolvedLocation: resolveTimelineLocation(event, context.entries),
+    resolvedParticipants: resolveTimelineParticipants(event, context.entries),
+    resolvedChapter: resolvedChapter ? chapterRefTitle(resolvedChapter) : undefined,
+    resolvedScene: resolveCodexName(event.sceneId, 'scene', context.entries),
+    resolvedBeat: resolveCodexName(event.beatId, 'beat', context.entries),
+    conflictIds: []
+  };
+}
+
 function normalizeTimelineEvent(event: TimelineEvent): TimelineEvent {
   const timestamp = event.updatedAt || nowIso();
   const start = normalizeTimelinePoint(event.start, 0);
@@ -4116,6 +4673,31 @@ function analyzeTimelineConflicts(events: TimelineEvent[], entries: CodexEntry[]
       const participantName = resolveCodexName(participant, 'character', entries) ?? participant;
       const locationNames = locations.map((location) => resolveCodexName(location, 'location', entries) ?? location);
       conflicts.push(timelineConflict('multi-location', grouped.map((event) => event.id), 'warning', '同一人物同一时间多地点', `${participantName} 在 ${time} 同时出现在：${locationNames.join('、')}`));
+    }
+  }
+  return conflicts;
+}
+
+function analyzeTimelineReferenceConflicts(currentEvents: TimelineResolvedEvent[], referenceEvents: TimelineResolvedEvent[], entries: CodexEntry[]): TimelineConflict[] {
+  const conflicts: TimelineConflict[] = [];
+  const byParticipantAndTime = new Map<string, TimelineResolvedEvent[]>();
+  for (const event of [...currentEvents, ...referenceEvents]) {
+    const participants = asStringArray(event.participantIds).length > 0 ? asStringArray(event.participantIds) : asStringArray(event.participants);
+    for (const participant of participants) {
+      const key = `${participant}|${event.absoluteStartSortValue}`;
+      byParticipantAndTime.set(key, [...(byParticipantAndTime.get(key) ?? []), event]);
+    }
+  }
+  for (const [key, grouped] of byParticipantAndTime) {
+    if (!grouped.some((event) => !event.isReference) || !grouped.some((event) => event.isReference)) {
+      continue;
+    }
+    const locations = [...new Set(grouped.map((event) => event.locationId || event.location).filter(Boolean))];
+    if (locations.length > 1) {
+      const [participant, time] = key.split('|');
+      const participantName = resolveCodexName(participant, 'character', entries) ?? participant;
+      const locationNames = locations.map((location) => resolveCodexName(location, 'location', entries) ?? location);
+      conflicts.push(timelineConflict('multi-location', grouped.map((event) => event.id), 'warning', '同一人物同一绝对时间多地点', `${participantName} 在绝对时间 ${time} 同时出现在：${locationNames.join('、')}`));
     }
   }
   return conflicts;

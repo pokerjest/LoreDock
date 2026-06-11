@@ -137,6 +137,7 @@ test('deletes codex cards', async () => {
 test('creates extended codex cards', async () => {
   const storage = await initializedStorage();
   await storage.createForeshadowing({ name: '锁门声' });
+  await createTimeline(storage);
   await storage.createTimelineEvent({ name: '旧城封锁' });
   await storage.createScene({ name: '城门冲突', chapterId: 'chapter-001' });
   await storage.createBeat({ name: '发现血迹', chapterId: 'chapter-001' });
@@ -148,8 +149,25 @@ test('creates extended codex cards', async () => {
   assert.equal((await storage.listCodexEntries('beat')).length, 1);
 });
 
-test('migrates legacy timeline codex cards into independent timeline document', async () => {
+test('requires creating a timeline before adding timeline events', async () => {
   const storage = await initializedStorage();
+  const view = await storage.getTimelineResolvedView();
+
+  assert.equal(view.hasTimeline, false);
+  await assert.rejects(storage.createTimelineEvent({ name: '孤立事件' }), /请先创建时间线/);
+
+  const document = await storage.createTimelineDocument({ title: '故事时间线' });
+  await storage.createTimelineEvent({ name: '第一件事' }, document.id);
+
+  assert.equal((await storage.readTimelineDocument(document.id)).events.length, 1);
+});
+
+test('resets legacy timeline files into an empty v3 timeline store', async () => {
+  const storage = await initializedStorage();
+  const character = await storage.createCharacter({ name: '吴烬' });
+  await fs.mkdir(storage.resolve('.loredock/timeline'), { recursive: true });
+  await fs.writeFile(storage.resolve('.loredock/timeline/timeline.json'), JSON.stringify({ schemaVersion: 1, id: 'timeline-main', title: '旧时间线', events: [] }, null, 2), 'utf8');
+  await fs.writeFile(storage.resolve('.loredock/timeline/child.json'), JSON.stringify({ schemaVersion: 1, id: 'child', title: '旧子线', events: [] }, null, 2), 'utf8');
   const legacyDir = storage.resolve('codex/timeline');
   await fs.mkdir(legacyDir, { recursive: true });
   await fs.writeFile(path.join(legacyDir, 'timeline-legacy.json'), JSON.stringify({
@@ -171,17 +189,22 @@ test('migrates legacy timeline codex cards into independent timeline document', 
     updatedAt: '2026-01-01T00:00:00.000Z'
   }, null, 2), 'utf8');
 
-  const document = await storage.readTimelineDocument();
+  const view = await storage.getTimelineResolvedView();
+  const characterEntry = await storage.findCodexEntryById(character.id);
 
-  assert.equal(document.events.length, 1);
-  assert.equal(document.events[0].title, '旧城封锁');
-  assert.equal(document.events[0].start.label, '第一日夜');
-  assert.equal(document.events[0].start.sortValue, 7);
+  assert.equal(view.hasTimeline, false);
+  assert.equal(view.index.timelines.length, 0);
+  assert.equal(await exists(storage.resolve('.loredock/timeline/timelines.json')), true);
+  assert.equal(await exists(storage.resolve('.loredock/timeline/timeline.json')), false);
+  assert.equal(await exists(storage.resolve('.loredock/timeline/child.json')), false);
+  assert.equal(await exists(legacyDir), false);
+  assert.ok(characterEntry);
   assert.equal((await storage.listCodexEntries()).some((entry) => (entry.card as { kind: string }).kind === 'timeline-event'), false);
 });
 
 test('timeline events preserve free calendar start and end fields', async () => {
   const storage = await initializedStorage();
+  await createTimeline(storage);
   const event = await storage.createTimelineEvent({ name: '创世余烬' });
   const document = await storage.readTimelineDocument();
   await storage.writeTimelineDocument({
@@ -211,6 +234,7 @@ test('timeline events preserve free calendar start and end fields', async () => 
 
 test('reports timeline invalid references and reversed event range', async () => {
   const storage = await initializedStorage();
+  await createTimeline(storage);
   const event = await storage.createTimelineEvent({ name: '倒置事件' });
   const document = await storage.readTimelineDocument();
   await storage.writeTimelineDocument({
@@ -245,6 +269,7 @@ test('resolves timeline strong bindings from codex and plan sources', async () =
   const location = await storage.createLocation({ name: '旧城门' });
   const scene = await storage.createScene({ name: '城门冲突' });
   const beat = await storage.createBeat({ name: '守卫盘问' });
+  await createTimeline(storage);
   const event = await storage.createTimelineEvent({ name: '入城' });
   const document = await storage.readTimelineDocument();
   await storage.writeTimelineDocument({
@@ -282,6 +307,7 @@ test('resolves timeline strong bindings from codex and plan sources', async () =
 
 test('moves timeline events by sort values without touching locked events', async () => {
   const storage = await initializedStorage();
+  await createTimeline(storage);
   const movable = await storage.createTimelineEvent({ name: '可移动' });
   const locked = await storage.createTimelineEvent({ name: '锁定' });
   const document = await storage.readTimelineDocument();
@@ -305,6 +331,7 @@ test('reports timeline strong binding conflicts after codex source deletion', as
   const storage = await initializedStorage();
   const character = await storage.createCharacter({ name: '吴烬' });
   const location = await storage.createLocation({ name: '旧城' });
+  await createTimeline(storage);
   const event = await storage.createTimelineEvent({ name: '失效绑定' });
   const document = await storage.readTimelineDocument();
   await storage.writeTimelineDocument({
@@ -334,15 +361,223 @@ test('reports timeline strong binding conflicts after codex source deletion', as
   assert.equal(hasHealthIssue(report, 'timeline', 'warning', /关联地点不存在/), true);
 });
 
-test('timeline workbench html keeps expected v2 controls', async () => {
-  const source = await fs.readFile(path.join(process.cwd(), 'src', 'webviews', 'timelinePanel.ts'), 'utf8');
+test('creates child timelines from parent event origins with ancestor references', async () => {
+  const storage = await initializedStorage();
+  const parent = await createTimeline(storage);
+  const parentEvent = await storage.createTimelineEvent({ name: '立国' }, parent.id);
+  const currentParent = await storage.readTimelineDocument(parent.id);
+  const alignedParent = await storage.writeTimelineDocument({
+    ...currentParent,
+    events: currentParent.events.map((event) => event.id === parentEvent.id ? {
+      ...event,
+      start: { label: '大陆历 300 年', sortValue: 300 },
+      location: '大陆',
+      participants: ['建国者']
+    } : event)
+  });
 
-  for (const id of ['newEvent', 'save', 'refresh', 'fitView', 'conflictCheck', 'autoLane', 'resources']) {
+  const child = await storage.createTimelineDocument({
+    title: '王国历',
+    calendarName: '王国历',
+    parentTimelineId: parent.id,
+    originEventId: parentEvent.id
+  });
+  const view = await storage.getTimelineResolvedView(child.id);
+
+  assert.equal(child.parentId, parent.id);
+  assert.equal(child.origin?.parentEventId, parentEvent.id);
+  assert.equal(child.events.length, 0);
+  assert.equal(view.activeTimelineOffset, 300);
+  assert.equal(view.originStatus.status, 'ok');
+  assert.equal(view.events.some((event) => event.id === parentEvent.id && event.isReference && event.absoluteStartSortValue === 300), true);
+  assert.equal(view.events.some((event) => event.timelineId === child.id && !event.isReference), false);
+});
+
+test('syncs and reanchors child timeline origins', async () => {
+  const storage = await initializedStorage();
+  const parent = await createTimeline(storage);
+  const firstOrigin = await storage.createTimelineEvent({ name: '王国建立' }, parent.id);
+  const secondOrigin = await storage.createTimelineEvent({ name: '迁都' }, parent.id);
+  const currentParent = await storage.readTimelineDocument(parent.id);
+  const alignedParentForReanchor = await storage.writeTimelineDocument({
+    ...currentParent,
+    events: currentParent.events.map((event) => event.id === firstOrigin.id
+      ? { ...event, start: { label: '大陆 100 年', sortValue: 100 } }
+      : event.id === secondOrigin.id
+        ? { ...event, start: { label: '大陆 150 年', sortValue: 150 } }
+        : event)
+  });
+  const child = await storage.createTimelineDocument({
+    title: '王国历',
+    parentTimelineId: parent.id,
+    originEventId: firstOrigin.id
+  });
+  await storage.writeTimelineDocument({
+    ...alignedParentForReanchor,
+    events: alignedParentForReanchor.events.map((event) => event.id === firstOrigin.id ? { ...event, start: { label: '大陆 120 年', sortValue: 120 } } : event)
+  });
+
+  const drifted = await storage.getTimelineResolvedView(child.id);
+  assert.equal(drifted.originStatus.status, 'drifted');
+  assert.equal(drifted.originStatus.currentParentSortValue, 120);
+
+  await storage.syncTimelineOrigin(child.id);
+  const synced = await storage.getTimelineResolvedView(child.id);
+  assert.equal(synced.originStatus.status, 'ok');
+  assert.equal(synced.activeTimelineOffset, 120);
+
+  await storage.reanchorTimeline(child.id, parent.id, secondOrigin.id);
+  const reanchored = await storage.getTimelineResolvedView(child.id);
+  assert.equal(reanchored.originStatus.parentEventId, secondOrigin.id);
+  assert.equal(reanchored.activeTimelineOffset, 150);
+});
+
+test('deletes child timeline documents and falls back to the parent timeline', async () => {
+  const storage = await initializedStorage();
+  const parent = await createTimeline(storage);
+  const origin = await storage.createTimelineEvent({ name: 'origin' }, parent.id);
+  const child = await storage.createTimelineDocument({
+    title: 'child timeline',
+    parentTimelineId: parent.id,
+    originEventId: origin.id
+  });
+
+  const index = await storage.deleteTimelineDocument(child.id);
+
+  assert.equal(index.activeTimelineId, parent.id);
+  assert.equal(index.timelines.some((timeline) => timeline.id === child.id), false);
+  assert.equal(await storage.readTimelineDocumentIfExists(child.id), undefined);
+  assert.equal(await exists(path.join(storage.workspaceRoot, '.loredock', 'timeline', `${child.id}.json`)), false);
+});
+
+test('deletes a root timeline after other timelines exist and promotes children', async () => {
+  const storage = await initializedStorage();
+  const root = await createTimeline(storage);
+  const origin = await storage.createTimelineEvent({ name: 'origin' }, root.id);
+  const child = await storage.createTimelineDocument({
+    title: 'child timeline',
+    parentTimelineId: root.id,
+    originEventId: origin.id
+  });
+  await storage.setActiveTimeline(root.id);
+
+  const index = await storage.deleteTimelineDocument(root.id);
+  const promoted = await storage.readTimelineDocument(child.id);
+  const refreshed = await storage.readTimelineIndex();
+  const view = await storage.getTimelineResolvedView(child.id);
+
+  assert.equal(index.activeTimelineId, child.id);
+  assert.equal(promoted.parentId, undefined);
+  assert.equal(promoted.origin, undefined);
+  assert.equal(refreshed.timelines.some((timeline) => timeline.id === root.id), false);
+  assert.equal(view.originStatus.status, 'root');
+  assert.equal(await exists(path.join(storage.workspaceRoot, '.loredock', 'timeline', 'timeline.json')), false);
+});
+
+test('allows deleting the last timeline and promotes children from any deleted timeline', async () => {
+  const storage = await initializedStorage();
+
+  const root = await storage.createTimelineDocument({ title: 'temporary root timeline' });
+  const emptyIndex = await storage.deleteTimelineDocument(root.id);
+  const emptyView = await storage.getTimelineResolvedView();
+
+  assert.equal(emptyIndex.activeTimelineId, undefined);
+  assert.equal(emptyIndex.timelines.length, 0);
+  assert.equal(emptyView.hasTimeline, false);
+  assert.equal(emptyView.events.length, 0);
+  assert.equal(await storage.readTimelineDocumentIfExists(), undefined);
+  assert.equal(await exists(path.join(storage.workspaceRoot, '.loredock', 'timeline', `${root.id}.json`)), false);
+
+  const parent = await createTimeline(storage);
+  const origin = await storage.createTimelineEvent({ name: 'origin' }, parent.id);
+  const child = await storage.createTimelineDocument({
+    title: 'child timeline',
+    parentTimelineId: parent.id,
+    originEventId: origin.id
+  });
+  const childOrigin = await storage.createTimelineEvent({ name: 'child origin' }, child.id);
+  await storage.createTimelineDocument({
+    title: 'grandchild timeline',
+    parentTimelineId: child.id,
+    originEventId: childOrigin.id
+  });
+
+  const promotedIndex = await storage.deleteTimelineDocument(child.id);
+  const grandchild = (await storage.listTimelineDocuments()).find((document) => document.title === 'grandchild timeline');
+  assert.ok(grandchild);
+  assert.equal(grandchild.parentId, undefined);
+  assert.equal(grandchild.origin, undefined);
+  assert.equal(promotedIndex.timelines.some((timeline) => timeline.id === child.id), false);
+});
+
+test('reports timeline hierarchy structure issues', async () => {
+  const storage = await initializedStorage();
+  const parent = await createTimeline(storage);
+  const parentEvent = await storage.createTimelineEvent({ name: '纪元起点' }, parent.id);
+  const child = await storage.createTimelineDocument({
+    title: '破损子线',
+    parentTimelineId: parent.id,
+    originEventId: parentEvent.id
+  });
+  await storage.writeTimelineDocument({
+    ...child,
+    parentId: 'timeline-missing',
+    origin: {
+      parentTimelineId: parent.id,
+      parentEventId: 'event-missing',
+      parentSortValue: 99,
+      childSortValue: 0,
+      label: '失效锚点'
+    }
+  });
+  const cycleA = await storage.createTimelineDocument({ title: '循环 A' });
+  const cycleB = await storage.createTimelineDocument({ title: '循环 B' });
+  await storage.writeTimelineDocument({ ...cycleA, parentId: cycleB.id });
+  await storage.writeTimelineDocument({ ...cycleB, parentId: cycleA.id });
+
+  const report = await storage.buildProjectHealthReport();
+
+  assert.equal(hasHealthIssue(report, 'timeline', 'warning', /时间线父级不存在/), true);
+  assert.equal(hasHealthIssue(report, 'timeline', 'warning', /时间线起点事件不存在/), true);
+  assert.equal(hasHealthIssue(report, 'timeline', 'warning', /时间线父级与起点来源不一致/), true);
+  assert.equal(hasHealthIssue(report, 'timeline', 'warning', /时间线形成循环/), true);
+  assert.equal(hasHealthIssue(report, 'timeline', 'warning', /时间线起点事件缺失/), false);
+});
+
+test('timeline workbench html keeps simplified default controls and advanced manager controls', async () => {
+  const panelSource = await fs.readFile(path.join(process.cwd(), 'src', 'webviews', 'timelinePanel.ts'), 'utf8');
+  const viewSource = await fs.readFile(path.join(process.cwd(), 'src', 'webviews', 'timelinePanelView.ts'), 'utf8');
+  const source = `${panelSource}\n${viewSource}`;
+
+  for (const id of ['newEvent', 'save', 'refresh', 'timelineSelect', 'openCreateTimeline', 'openTimelineManager', 'emptyTimeline', 'newRootTimeline']) {
     assert.match(source, new RegExp(`id="${id}"`));
   }
-  assert.match(source, /draggable="true"/);
+  for (const id of ['managerModal', 'newChildTimeline', 'deleteTimeline', 'parentTimelineId', 'originEventId', 'reanchorTimeline', 'syncOrigin', 'originSummary', 'showReferenceEvents', 'referenceEvents']) {
+    assert.match(source, new RegExp(`id="${id}"`));
+  }
+  assert.match(source, /还没有时间线/);
+  assert.match(source, /时间线管理/);
+  assert.match(source, /\.emptyHero\[hidden\]/);
+  assert.match(source, /id="refresh" class="iconButton"/);
+  assert.match(source, /postWithCurrent/);
+  assert.match(source, /function svgEvents\(\)/);
+  assert.match(source, /addEventListener\('pointerdown'/);
+  assert.match(source, /classList\?\.contains\('resizeHandle'\)/);
+  assert.match(source, /width="16" height="40"/);
+  assert.match(source, /id="eventCategories"/);
+  assert.match(source, /eventEye/);
+  assert.match(source, /hiddenEventIds/);
+  assert.match(source, /toggleEventVisibility/);
+  assert.match(source, /selectedEventId/);
+  assert.match(source, /categoryIcon/);
+  assert.match(source, /buildLanesFromEvents\(events\)/);
+  assert.match(source, /character-name:/);
   assert.match(source, /participantIds/);
+  assert.match(source, /checkboxGroupField\('participantIds'/);
+  assert.match(source, /class="checkboxItem"/);
+  assert.match(source, /querySelectorAll\('input\[type="checkbox"\]:checked'\)/);
   assert.match(source, /locationId/);
+  assert.doesNotMatch(source, /id="resources"/);
 });
 
 test('deletes the LoreDock book project folders without deleting workspace root', async () => {
@@ -1332,6 +1567,7 @@ test('reports duplicate codex names and alias collisions as codex warnings', asy
 
 test('reports timeline participant conflicts across locations', async () => {
   const storage = await initializedStorage();
+  await createTimeline(storage);
   const first = await storage.createTimelineEvent({ name: '吴烬在旧城' });
   const second = await storage.createTimelineEvent({ name: '吴烬在码头' });
   const document = await storage.readTimelineDocument();
@@ -1402,6 +1638,7 @@ test('reports weak plan, timeline, and character structure quality', async () =>
   const chapter = (await storage.requireManifest()).volumes[0].chapters[0];
   await storage.createScene({ name: '弱场景', chapterId: chapter.id });
   await storage.createBeat({ name: '弱 Beat', chapterId: chapter.id });
+  await createTimeline(storage);
   await storage.createTimelineEvent({ name: '弱事件' });
   await storage.createCharacter({ name: '弱人物' });
 
@@ -1644,6 +1881,10 @@ async function initializedStorage(): Promise<LoreDockStorage> {
     createSamples: false
   });
   return storage;
+}
+
+async function createTimeline(storage: LoreDockStorage, title = '故事时间线') {
+  return storage.createTimelineDocument({ title, calendarName: '自由日历' });
 }
 
 async function tempRoot(): Promise<string> {

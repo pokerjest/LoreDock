@@ -954,7 +954,12 @@ async function createTimelineEvent(context: vscode.ExtensionContext, getStorage:
   const storage = requireStorage(getStorage);
   await storage.requireManifest();
   const chapter = await resolveOptionalChapter(storage);
-  const document = await storage.readTimelineDocument();
+  const document = await storage.readTimelineDocumentIfExists();
+  if (!document) {
+    await vscode.window.showInformationMessage('请先在时间线工作台中新建一条时间线。');
+    await showTimelineWorkbench(context, storage);
+    return;
+  }
   await storage.createTimelineEvent({ name: `未命名事件 ${document.events.length + 1}`, chapterId: chapter?.chapter.id });
   await showTimelineWorkbench(context, storage);
 }

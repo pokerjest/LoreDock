@@ -362,6 +362,51 @@ export interface TimelineCalendar {
   note: string;
 }
 
+export interface TimelineMeta {
+  id: string;
+  title: string;
+  parentId?: string;
+  calendarName: string;
+  eventCount: number;
+  updatedAt: string;
+}
+
+export interface TimelineIndexDocument {
+  schemaVersion: 1;
+  activeTimelineId?: string;
+  timelines: TimelineMeta[];
+  updatedAt: string;
+}
+
+export interface TimelineStoreDocument {
+  schemaVersion: 3;
+  activeTimelineId?: string;
+  timelines: TimelineDocument[];
+  updatedAt: string;
+}
+
+export interface TimelineOrigin {
+  parentTimelineId: string;
+  parentEventId: string;
+  parentSortValue: number;
+  childSortValue: number;
+  label: string;
+}
+
+export type TimelineOriginState = 'root' | 'ok' | 'missing-parent' | 'missing-event' | 'drifted' | 'cycle';
+
+export interface TimelineOriginStatus {
+  status: TimelineOriginState;
+  parentTimelineId?: string;
+  parentTimelineTitle?: string;
+  parentEventId?: string;
+  parentEventTitle?: string;
+  recordedParentSortValue?: number;
+  currentParentSortValue?: number;
+  childSortValue?: number;
+  message: string;
+}
+
 export interface TimelinePoint {
   label: string;
   sortValue: number;
@@ -432,6 +477,11 @@ export interface TimelineConflict {
 }
 
 export interface TimelineResolvedEvent extends TimelineEvent {
+  timelineId: string;
+  timelineTitle: string;
+  absoluteStartSortValue: number;
+  absoluteEndSortValue?: number;
+  isReference: boolean;
   resolvedLocation?: string;
   resolvedParticipants: string[];
   resolvedChapter?: string;
@@ -441,7 +491,13 @@ export interface TimelineResolvedEvent extends TimelineEvent {
 }
 
 export interface TimelineResolvedView {
-  document: TimelineDocument;
+  index: TimelineIndexDocument;
+  activeTimelineId?: string;
+  hasTimeline: boolean;
+  activeTimelineOffset: number;
+  ancestorTimelineIds: string[];
+  originStatus: TimelineOriginStatus;
+  document?: TimelineDocument;
   lanes: TimelineLane[];
   events: TimelineResolvedEvent[];
   conflicts: TimelineConflict[];
@@ -451,6 +507,8 @@ export interface TimelineDocument {
   schemaVersion: 1;
   id: string;
   title: string;
+  parentId?: string;
+  origin?: TimelineOrigin;
   calendar: TimelineCalendar;
   events: TimelineEvent[];
   createdAt: string;
