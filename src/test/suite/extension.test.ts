@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import * as vscode from 'vscode';
 
 export async function runExtensionSmokeTests(): Promise<void> {
@@ -30,14 +32,23 @@ export async function runExtensionSmokeTests(): Promise<void> {
     'loredock.deleteCodexEntry',
     'loredock.showForeshadowingBoard',
     'loredock.showTimelineBoard',
+    'loredock.openTimelineWorkbench',
     'loredock.showSceneBeatBoard',
     'loredock.normalizeSceneOrder',
     'loredock.normalizeBeatOrder',
     'loredock.reviewPendingCodexUpdates',
     'loredock.openPlanView',
+    'loredock.openBlueprintOutline',
+    'loredock.openBlueprintForOutline',
+    'loredock.openOutlineSource',
     'loredock.importOutlineToPlan',
     'loredock.rebuildReferenceIndex',
     'loredock.showReferenceIndex',
+    'loredock.showProjectHealth',
+    'loredock.previewProjectHealthFixes',
+    'loredock.fixProjectHealth',
+    'loredock.saveProjectHealthBaseline',
+    'loredock.clearProjectHealthBaseline',
     'loredock.exportCodexZip',
     'loredock.importCodexZip',
     'loredock.openStyleGuide',
@@ -46,8 +57,16 @@ export async function runExtensionSmokeTests(): Promise<void> {
     'loredock.importManuscript',
     'loredock.exportManuscript',
     'loredock.showStats',
+    'loredock.showProjectDashboard',
     'loredock.runLocalConsistencyCheck'
   ]) {
     assert.ok(commands.includes(command), `${command} should be registered`);
   }
+
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  assert.ok(workspaceRoot, 'integration test should have a workspace folder');
+  await vscode.commands.executeCommand('loredock.initProject');
+  await vscode.commands.executeCommand('loredock.openBlueprintOutline');
+  const blueprintFiles = await fs.readdir(path.join(workspaceRoot, '.loredock', 'blueprints'));
+  assert.ok(blueprintFiles.some((file) => file.endsWith('.json')), 'empty blueprint panel should create a blueprint document');
 }

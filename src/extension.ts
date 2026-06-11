@@ -2,13 +2,20 @@ import path from 'node:path';
 import * as vscode from 'vscode';
 import { ExportFormat, LoreDockStorage } from './core/storage';
 import { decodeTextBuffer, nowIso } from './core/utils';
+import { BlueprintPanelAction, BlueprintPanelHandle, showBlueprintPanel } from './webviews/blueprintPanel';
 import { showCodexFormPanel } from './webviews/codexFormPanel';
+import { DashboardPanelAction, showDashboardPanel } from './webviews/dashboardPanel';
+import { HealthPanelAction, showHealthPanel } from './webviews/healthPanel';
 import { PlanPanelState, showPlanPanel } from './webviews/planPanel';
 import { showStatsPanel } from './webviews/statsPanel';
+import { showTimelineWorkbench } from './webviews/timelinePanel';
 import { CodexTreeProvider, isCodexEntryNode } from './views/codexTree';
 import { isChapterNode, isProjectNode, isVolumeNode, ManuscriptTreeProvider } from './views/manuscriptTree';
+import { isOutlineDocumentNode, OutlineTreeProvider } from './views/outlineTree';
 import {
   BeatPlan,
+  BlueprintDocument,
+  BlueprintNode,
   ChapterRef,
   ChapterSummary,
   ChapterStatus,
@@ -17,12 +24,19 @@ import {
   ConsistencyIssue,
   ForeshadowingCard,
   LocationCard,
+  ProjectHealthFixReport,
+  ProjectHealthCategory,
+  ProjectHealthReport,
+  ProjectHealthSeverity,
   ProjectManifest,
   ScenePlan,
-  TimelineEvent,
   VolumeMeta,
   WorldRule
 } from './types';
+
+let activeBlueprintPanel: BlueprintPanelHandle | undefined;
+let activeBlueprintRefresh: (() => Promise<void>) | undefined;
+let activeBlueprintId: string | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
   const getStorage = () => {
@@ -32,20 +46,59 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const manuscriptTree = new ManuscriptTreeProvider(getStorage);
   const codexTree = new CodexTreeProvider(getStorage);
+  const outlineTree = new OutlineTreeProvider(getStorage);
+  const blueprintStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 98);
+  blueprintStatus.text = '$(type-hierarchy) 蓝图';
+  blueprintStatus.tooltip = '切换到 LoreDock 大纲蓝图模式';
+  blueprintStatus.command = 'loredock.openBlueprintOutline';
+  blueprintStatus.show();
+  const timelineStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 97);
+  timelineStatus.text = '$(history) 时间线';
+  timelineStatus.tooltip = '打开 LoreDock 时间线工作台';
+  timelineStatus.command = 'loredock.openTimelineWorkbench';
+  timelineStatus.show();
+  const refreshBlueprintPanel = debounceAsync(async () => {
+    await activeBlueprintRefresh?.();
+  }, 120);
+  const codexWatcher = vscode.workspace.createFileSystemWatcher('**/codex/**/*.json');
+  const outlineWatcher = vscode.workspace.createFileSystemWatcher('**/.loredock/outlines/**/*.json');
+  const refreshCodexAndBlueprint = () => {
+    codexTree.refresh();
+    void refreshBlueprintPanel();
+  };
+  const refreshManuscriptCodexAndBlueprint = () => {
+    manuscriptTree.refresh();
+    codexTree.refresh();
+    outlineTree.refresh();
+    void refreshBlueprintPanel();
+  };
+  codexWatcher.onDidCreate(refreshCodexAndBlueprint, undefined, context.subscriptions);
+  codexWatcher.onDidChange(refreshCodexAndBlueprint, undefined, context.subscriptions);
+  codexWatcher.onDidDelete(refreshCodexAndBlueprint, undefined, context.subscriptions);
+  outlineWatcher.onDidCreate(refreshManuscriptCodexAndBlueprint, undefined, context.subscriptions);
+  outlineWatcher.onDidChange(refreshManuscriptCodexAndBlueprint, undefined, context.subscriptions);
+  outlineWatcher.onDidDelete(refreshManuscriptCodexAndBlueprint, undefined, context.subscriptions);
   context.subscriptions.push(
+    blueprintStatus,
+    timelineStatus,
+    codexWatcher,
+    outlineWatcher,
     vscode.window.registerTreeDataProvider('loredock.manuscript', manuscriptTree),
+    vscode.window.registerTreeDataProvider('loredock.outlines', outlineTree),
     vscode.window.registerTreeDataProvider('loredock.codex', codexTree),
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
       manuscriptTree.refresh();
+      outlineTree.refresh();
       codexTree.refresh();
     }),
     registerCommand('loredock.refreshViews', () => {
       manuscriptTree.refresh();
+      outlineTree.refresh();
       codexTree.refresh();
     }),
-    registerCommand('loredock.openSettings', () => openSettings(getStorage)),
-    registerCommand('loredock.showManuscriptActions', () => showManuscriptActions(context, getStorage, manuscriptTree, codexTree)),
-    registerCommand('loredock.showCodexActions', () => showCodexActions(getStorage, codexTree)),
+    registerCommand('loredock.openSettings', () => openSettings(context, getStorage)),
+    registerCommand('loredock.showManuscriptActions', () => showManuscriptActions(context, getStorage, manuscriptTree, codexTree, outlineTree)),
+    registerCommand('loredock.showCodexActions', () => showCodexActions(context, getStorage, codexTree, outlineTree)),
     registerCommand('loredock.initProject', () => initProject(getStorage, manuscriptTree, codexTree)),
     registerCommand('loredock.createVolume', () => createVolume(getStorage, manuscriptTree)),
     registerCommand('loredock.deleteProject', (node?: unknown) => deleteProject(getStorage, manuscriptTree, codexTree, node)),
@@ -59,10 +112,14 @@ export function activate(context: vscode.ExtensionContext): void {
     registerCommand('loredock.createLocation', () => createLocation(getStorage, codexTree)),
     registerCommand('loredock.createWorldRule', () => createWorldRule(getStorage, codexTree)),
     registerCommand('loredock.createForeshadowing', () => createForeshadowing(getStorage, codexTree)),
-    registerCommand('loredock.createTimelineEvent', () => createTimelineEvent(getStorage, codexTree)),
+    registerCommand('loredock.createTimelineEvent', () => createTimelineEvent(context, getStorage)),
     registerCommand('loredock.createScene', () => createScene(getStorage, codexTree)),
     registerCommand('loredock.createBeat', () => createBeat(getStorage, codexTree)),
     registerCommand('loredock.openPlanView', () => openPlanView(context, getStorage)),
+    registerCommand('loredock.openBlueprintOutline', () => openBlueprintOutline(context, getStorage, manuscriptTree, codexTree, outlineTree)),
+    registerCommand('loredock.openTimelineWorkbench', () => openTimelineWorkbench(context, getStorage)),
+    registerCommand('loredock.openBlueprintForOutline', (node?: unknown) => openBlueprintForOutline(context, getStorage, node, manuscriptTree, codexTree, outlineTree)),
+    registerCommand('loredock.openOutlineSource', (node?: unknown) => openOutlineSource(getStorage, node)),
     registerCommand('loredock.importOutlineToPlan', () => importOutlineToPlan(getStorage, manuscriptTree, codexTree)),
     registerCommand('loredock.rebuildReferenceIndex', () => rebuildReferenceIndex(getStorage)),
     registerCommand('loredock.showReferenceIndex', () => showReferenceIndex(getStorage)),
@@ -73,7 +130,7 @@ export function activate(context: vscode.ExtensionContext): void {
     registerCommand('loredock.filterCodexEntries', () => filterCodexEntries(getStorage)),
     registerCommand('loredock.deleteCodexEntry', (node?: unknown) => deleteCodexEntry(getStorage, codexTree, node)),
     registerCommand('loredock.showForeshadowingBoard', () => showForeshadowingBoard(getStorage)),
-    registerCommand('loredock.showTimelineBoard', () => showTimelineBoard(getStorage)),
+    registerCommand('loredock.showTimelineBoard', () => openTimelineWorkbench(context, getStorage)),
     registerCommand('loredock.showSceneBeatBoard', () => showSceneBeatBoard(getStorage)),
     registerCommand('loredock.normalizeSceneOrder', () => normalizeSceneOrder(getStorage, codexTree)),
     registerCommand('loredock.normalizeBeatOrder', () => normalizeBeatOrder(getStorage, codexTree)),
@@ -84,6 +141,12 @@ export function activate(context: vscode.ExtensionContext): void {
     registerCommand('loredock.importManuscript', () => importManuscript(getStorage, manuscriptTree)),
     registerCommand('loredock.exportManuscript', () => exportManuscript(getStorage)),
     registerCommand('loredock.showStats', () => showWritingStats(getStorage)),
+    registerCommand('loredock.showProjectDashboard', () => showProjectDashboard(context, getStorage)),
+    registerCommand('loredock.showProjectHealth', () => showProjectHealth(context, getStorage)),
+    registerCommand('loredock.previewProjectHealthFixes', () => previewProjectHealthFixes(getStorage)),
+    registerCommand('loredock.fixProjectHealth', () => fixProjectHealth(getStorage)),
+    registerCommand('loredock.saveProjectHealthBaseline', () => saveProjectHealthBaseline(getStorage)),
+    registerCommand('loredock.clearProjectHealthBaseline', () => clearProjectHealthBaseline(getStorage)),
     registerCommand('loredock.runLocalConsistencyCheck', (node?: unknown) => runLocalConsistencyCheck(getStorage, node))
   );
 }
@@ -102,21 +165,49 @@ function registerCommand(command: string, callback: (...args: unknown[]) => unkn
   });
 }
 
+function debounceAsync(callback: () => Promise<void>, delayMs: number): () => void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return () => {
+    if (timer) {
+      clearTimeout(timer);
+    }
+    timer = setTimeout(() => {
+      timer = undefined;
+      void callback();
+    }, delayMs);
+  };
+}
+
+function refreshActiveBlueprintPanel(): void {
+  void activeBlueprintRefresh?.();
+}
+
 async function showManuscriptActions(
   context: vscode.ExtensionContext,
   getStorage: () => LoreDockStorage | undefined,
   manuscriptTree: ManuscriptTreeProvider,
-  codexTree: CodexTreeProvider
+  codexTree: CodexTreeProvider,
+  outlineTree: OutlineTreeProvider
 ): Promise<void> {
   const actions: Array<{ label: string; description?: string; run: () => Promise<void> | void }> = [
+    {
+      label: '项目仪表盘',
+      description: '聚合写作统计、健康问题和近期章节',
+      run: () => showProjectDashboard(context, getStorage)
+    },
     {
       label: '打开 Plan / Matrix',
       description: '按 Grid、Matrix、Outline 查看章节、场景、Beat 和资料卡引用',
       run: () => openPlanView(context, getStorage)
     },
     {
-      label: '从大纲创建规划',
-      description: '读取当前选区或剪贴板，批量创建卷、章、场景和 Beat',
+      label: '打开大纲蓝图',
+      description: '用节点画布组织大纲、资料卡、场景和 Beat',
+      run: () => openBlueprintOutline(context, getStorage, manuscriptTree, codexTree, outlineTree)
+    },
+    {
+      label: '导入独立大纲',
+      description: '读取当前选区或剪贴板，保存到 .loredock/outlines 并创建未绑定手稿的规划卡',
       run: () => importOutlineToPlan(getStorage, manuscriptTree, codexTree)
     },
     {
@@ -128,6 +219,16 @@ async function showManuscriptActions(
       label: '显示写作统计',
       description: '查看卷、章节、字数和状态分布',
       run: () => showWritingStats(getStorage)
+    },
+    {
+      label: '项目健康检查',
+      description: '扫描手稿、资料库、规划、时间线、伏笔和引用结构',
+      run: () => showProjectHealth(context, getStorage)
+    },
+    {
+      label: '预览项目健康安全修复',
+      description: '查看将清理和重排的结构问题',
+      run: async () => { await previewProjectHealthFixes(getStorage); }
     },
     {
       label: '设置写作目标',
@@ -177,8 +278,10 @@ async function showManuscriptActions(
 }
 
 async function showCodexActions(
+  context: vscode.ExtensionContext,
   getStorage: () => LoreDockStorage | undefined,
-  codexTree: CodexTreeProvider
+  codexTree: CodexTreeProvider,
+  outlineTree: OutlineTreeProvider
 ): Promise<void> {
   const actions: Array<{ label: string; description?: string; run: () => Promise<void> | void }> = [
     {
@@ -200,6 +303,21 @@ async function showCodexActions(
       label: '查看引用索引',
       description: '查看资料卡在手稿、摘要、场景和 Beat 中的出现位置',
       run: () => showReferenceIndex(getStorage)
+    },
+    {
+      label: '打开大纲蓝图',
+      description: '把资料卡拖进可视化大纲画布',
+      run: () => openBlueprintOutline(context, getStorage, undefined, codexTree, outlineTree)
+    },
+    {
+      label: '项目健康检查',
+      description: '扫描资料库冲突、无效引用和结构风险',
+      run: () => showProjectHealth(context, getStorage)
+    },
+    {
+      label: '预览项目健康安全修复',
+      description: '先查看会修改哪些结构问题',
+      run: async () => { await previewProjectHealthFixes(getStorage); }
     },
     {
       label: '导出资料库 ZIP',
@@ -230,19 +348,27 @@ async function openPlanView(context: vscode.ExtensionContext, getStorage: () => 
     if (action.command === 'import-outline') {
       await importOutlineToPlan(() => storage);
     }
+    if (action.command === 'open-blueprint') {
+      await openBlueprintOutline(context, () => storage);
+    }
     return loadPlanPanelState(storage);
   });
 }
 
 async function loadPlanPanelState(storage: LoreDockStorage): Promise<PlanPanelState> {
-  const [manifest, refs, entries, index] = await Promise.all([
+  const [manifest, refs, entries, index, outlines] = await Promise.all([
     storage.requireManifest(),
     storage.getFlatChapterRefs(),
     storage.listCodexEntries(),
-    storage.buildReferenceIndex()
+    storage.buildReferenceIndex(),
+    storage.listOutlines()
   ]);
   const scenes = entries.filter((entry) => entry.card.kind === 'scene').map((entry) => entry.card as ScenePlan);
   const beats = entries.filter((entry) => entry.card.kind === 'beat').map((entry) => entry.card as BeatPlan);
+  const manuscriptScenes = scenes.filter((scene) => scene.chapterId);
+  const manuscriptBeats = beats.filter((beat) => beat.chapterId);
+  const outlineScenes = scenes.filter((scene) => scene.outlineId && !scene.chapterId);
+  const outlineBeats = beats.filter((beat) => beat.outlineId && !beat.chapterId);
   const references = new Map<string, Set<string>>();
   const sceneChapter = new Map(scenes.map((scene) => [scene.id, scene.chapterId]));
   const beatChapter = new Map(beats.map((beat) => [beat.id, beat.chapterId]));
@@ -265,12 +391,265 @@ async function loadPlanPanelState(storage: LoreDockStorage): Promise<PlanPanelSt
     title: manifest.title,
     chapters: refs.map((ref) => ({
       ref,
-      scenes: scenes.filter((scene) => scene.chapterId === ref.chapter.id).sort((a, b) => a.order - b.order),
-      beats: beats.filter((beat) => beat.chapterId === ref.chapter.id).sort((a, b) => a.order - b.order)
+      scenes: manuscriptScenes.filter((scene) => scene.chapterId === ref.chapter.id).sort((a, b) => a.order - b.order),
+      beats: manuscriptBeats.filter((beat) => beat.chapterId === ref.chapter.id).sort((a, b) => a.order - b.order)
     })),
+    outlines,
+    outlineScenes: outlineScenes.sort((a, b) => a.order - b.order),
+    outlineBeats: outlineBeats.sort((a, b) => a.order - b.order),
     codexCards: entries.map((entry) => entry.card),
     references
   };
+}
+
+async function openBlueprintOutline(
+  context: vscode.ExtensionContext,
+  getStorage: () => LoreDockStorage | undefined,
+  manuscriptTree?: ManuscriptTreeProvider,
+  codexTree?: CodexTreeProvider,
+  outlineTree?: OutlineTreeProvider
+): Promise<void> {
+  const storage = requireStorage(getStorage);
+  await storage.requireManifest();
+  const loadState = async (blueprintId?: string) => storage.getBlueprintPanelState(blueprintId ?? activeBlueprintId);
+  const rememberBlueprint = async (statePromise: Promise<Awaited<ReturnType<LoreDockStorage['getBlueprintPanelState']>>>) => {
+    const state = await statePromise;
+    activeBlueprintId = state.current.id;
+    outlineTree?.refresh();
+    return state;
+  };
+  activeBlueprintRefresh = async () => {
+    if (activeBlueprintPanel) {
+      activeBlueprintPanel.refresh(await rememberBlueprint(loadState()));
+    }
+  };
+  if (activeBlueprintPanel) {
+    activeBlueprintPanel.refresh(await rememberBlueprint(loadState()));
+    activeBlueprintPanel.reveal();
+    return;
+  }
+  activeBlueprintPanel = showBlueprintPanel(context, await rememberBlueprint(loadState()), async (action: BlueprintPanelAction) => {
+    if (action.command === 'refresh') {
+      return rememberBlueprint(storage.getBlueprintPanelState(action.blueprintId));
+    }
+    if (action.command === 'create-blueprint') {
+      const blueprint = await storage.createBlueprint(action.title);
+      outlineTree?.refresh();
+      return rememberBlueprint(storage.getBlueprintPanelState(blueprint.id));
+    }
+    if (action.command === 'delete-blueprint') {
+      const blueprint = await storage.readBlueprint(action.blueprintId);
+      if (!blueprint) {
+        return storage.getBlueprintPanelState();
+      }
+      const answer = await vscode.window.showWarningMessage(
+        `确定删除蓝图「${blueprint.title}」吗？这不会删除手稿、大纲或资料卡。`,
+        { modal: true },
+        '删除蓝图'
+      );
+      if (answer === '删除蓝图') {
+        await storage.deleteBlueprint(action.blueprintId);
+      }
+      activeBlueprintId = undefined;
+      outlineTree?.refresh();
+      return rememberBlueprint(storage.getBlueprintPanelState());
+    }
+    if (action.command === 'select-blueprint') {
+      return rememberBlueprint(storage.getBlueprintPanelState(action.blueprintId));
+    }
+    if (action.command === 'save-blueprint') {
+      await storage.writeBlueprint(action.document);
+      return undefined;
+    }
+    if (action.command === 'create-from-outline') {
+      const blueprint = await storage.createBlueprintFromOutline(action.outlineId);
+      outlineTree?.refresh();
+      return rememberBlueprint(storage.getBlueprintPanelState(blueprint.id));
+    }
+    if (action.command === 'add-resource') {
+      const blueprint = await addBlueprintResource(storage, action.blueprintId, action.resourceId, action.resourceKind, { x: action.x, y: action.y });
+      return rememberBlueprint(storage.getBlueprintPanelState(blueprint.id));
+    }
+    if (action.command === 'delete-resource') {
+      if (action.resourceKind === 'outline' || action.resourceKind === 'outline-node') {
+        const outline = (await storage.listOutlines()).find((candidate) => candidate.id === action.resourceId);
+        if (!outline) {
+          return rememberBlueprint(storage.getBlueprintPanelState(action.blueprintId));
+        }
+        const answer = await vscode.window.showWarningMessage(
+          `确定删除大纲「${outline.title}」吗？这会删除 .loredock/outlines 中的文件，并从所有蓝图移除引用它的节点和连线。`,
+          { modal: true },
+          '删除大纲'
+        );
+        if (answer === '删除大纲') {
+          await storage.deleteOutlineAndBlueprintReferences(action.resourceId);
+          manuscriptTree?.refresh();
+          codexTree?.refresh();
+          outlineTree?.refresh();
+        }
+        return rememberBlueprint(storage.getBlueprintPanelState(action.blueprintId));
+      }
+      const entry = await storage.findCodexEntryById(action.resourceId);
+      if (!entry) {
+        return rememberBlueprint(storage.getBlueprintPanelState(action.blueprintId));
+      }
+      const answer = await vscode.window.showWarningMessage(
+        `确定删除资料卡「${entry.card.name}」吗？这会删除 ${entry.relativePath}，并从所有蓝图移除引用它的节点和连线。`,
+        { modal: true },
+        '删除资料卡'
+      );
+      if (answer === '删除资料卡') {
+        await storage.deleteCodexEntryAndBlueprintReferences(action.resourceId);
+        codexTree?.refresh();
+      }
+      return rememberBlueprint(storage.getBlueprintPanelState(action.blueprintId));
+    }
+    if (action.command === 'add-note') {
+      const blueprint = await storage.addNoteNodeToBlueprint(action.blueprintId, { x: action.x, y: action.y });
+      return rememberBlueprint(storage.getBlueprintPanelState(blueprint.id));
+    }
+    if (action.command === 'auto-layout') {
+      const blueprint = await storage.autoLayoutBlueprint(action.blueprintId);
+      return rememberBlueprint(storage.getBlueprintPanelState(blueprint.id));
+    }
+    if (action.command === 'preview-sync') {
+      return rememberBlueprint(withBlueprintSyncPreview(storage, action.blueprintId));
+    }
+    if (action.command === 'apply-sync') {
+      const deleting = action.decisions.filter((decision) => decision.action === 'delete-source').length;
+      if (deleting > 0) {
+        const answer = await vscode.window.showWarningMessage(
+          `确定通过蓝图同步删除 ${deleting} 个资料库来源吗？这会删除对应 JSON，并从所有蓝图移除引用节点和连线。`,
+          { modal: true },
+          '删除来源'
+        );
+        if (answer !== '删除来源') {
+          return rememberBlueprint(withBlueprintSyncPreview(storage, action.blueprintId));
+        }
+      }
+      const blueprint = await storage.applyBlueprintSync(action.blueprintId, action.decisions);
+      if (deleting > 0) {
+        manuscriptTree?.refresh();
+        codexTree?.refresh();
+      }
+      return rememberBlueprint(withBlueprintSyncPreview(storage, blueprint.id, {
+        applied: action.decisions.filter((decision) => decision.action !== 'skip').length,
+        skipped: action.decisions.filter((decision) => decision.action === 'skip').length,
+        pulled: action.decisions.filter((decision) => decision.action === 'pull').length,
+        pushed: action.decisions.filter((decision) => decision.action === 'push').length,
+        deletedSources: deleting
+      }));
+    }
+    if (action.command === 'open-source') {
+      await openHealthSource(storage, action.source);
+      return undefined;
+    }
+    return undefined;
+  }, () => {
+    activeBlueprintPanel = undefined;
+    activeBlueprintRefresh = undefined;
+    activeBlueprintId = undefined;
+  });
+}
+
+async function openBlueprintForOutline(
+  context: vscode.ExtensionContext,
+  getStorage: () => LoreDockStorage | undefined,
+  node?: unknown,
+  manuscriptTree?: ManuscriptTreeProvider,
+  codexTree?: CodexTreeProvider,
+  outlineTree?: OutlineTreeProvider
+): Promise<void> {
+  const storage = requireStorage(getStorage);
+  await storage.requireManifest();
+  const outlineId = isOutlineDocumentNode(node)
+    ? node.outline.id
+    : undefined;
+  if (!outlineId) {
+    await openBlueprintOutline(context, getStorage, manuscriptTree, codexTree, outlineTree);
+    return;
+  }
+  const blueprint = await storage.createBlueprintFromOutline(outlineId);
+  activeBlueprintId = blueprint.id;
+  outlineTree?.refresh();
+  await openBlueprintOutline(context, getStorage, manuscriptTree, codexTree, outlineTree);
+}
+
+async function openOutlineSource(getStorage: () => LoreDockStorage | undefined, node?: unknown): Promise<void> {
+  const storage = requireStorage(getStorage);
+  const outlineId = isOutlineDocumentNode(node)
+    ? node.outline.id
+    : undefined;
+  if (!outlineId) {
+    return;
+  }
+  const resource = (await storage.listBlueprintResources()).find((candidate) => candidate.kind === 'outline' && candidate.id === outlineId);
+  if (resource) {
+    await openHealthSource(storage, resource.relativePath);
+  }
+}
+
+async function withBlueprintSyncPreview(
+  storage: LoreDockStorage,
+  blueprintId: string,
+  syncResult?: Awaited<ReturnType<LoreDockStorage['getBlueprintPanelState']>>['syncResult']
+): Promise<Awaited<ReturnType<LoreDockStorage['getBlueprintPanelState']>>> {
+  const state = await storage.getBlueprintPanelState(blueprintId);
+  return {
+    ...state,
+    syncPreview: await storage.previewBlueprintSync(state.current.id),
+    syncResult
+  };
+}
+
+async function addBlueprintResource(
+  storage: LoreDockStorage,
+  blueprintId: string,
+  resourceId: string,
+  resourceKind: string,
+  position: { x: number; y: number }
+): Promise<BlueprintDocument> {
+  if (resourceKind !== 'outline') {
+    const entry = await storage.findCodexEntryById(resourceId);
+    if (!entry) {
+      throw new Error(`找不到资料卡：${resourceId}`);
+    }
+    return storage.addCodexNodeToBlueprint(blueprintId, entry, position);
+  }
+  const [blueprint, resources] = await Promise.all([
+    storage.readBlueprint(blueprintId),
+    storage.listBlueprintResources()
+  ]);
+  if (!blueprint) {
+    throw new Error(`找不到蓝图：${blueprintId}`);
+  }
+  const resource = resources.find((candidate) => candidate.kind === 'outline' && candidate.id === resourceId);
+  if (!resource) {
+    throw new Error(`找不到大纲：${resourceId}`);
+  }
+  const node: BlueprintNode = {
+    id: `bp-node-${Date.now()}`,
+    kind: 'outline',
+    title: resource.title,
+    refKind: 'outline',
+    refId: resource.id,
+    refPath: resource.relativePath,
+    x: position.x,
+    y: position.y,
+    width: 240,
+    height: 112,
+    note: '',
+    color: '#4e9aef',
+    lastSynced: {
+      title: resource.title,
+      note: '',
+      syncedAt: new Date().toISOString()
+    }
+  };
+  return storage.writeBlueprint({
+    ...blueprint,
+    nodes: [...blueprint.nodes, node]
+  });
 }
 
 async function importOutlineToPlan(
@@ -289,84 +668,12 @@ async function importOutlineToPlan(
     return;
   }
   const imported = await createPlanFromOutline(storage, text);
-  manuscriptTree?.refresh();
   codexTree?.refresh();
-  vscode.window.showInformationMessage(`已从大纲创建：卷 ${imported.volumes}，章节 ${imported.chapters}，场景 ${imported.scenes}，Beat ${imported.beats}。`);
+  vscode.window.showInformationMessage(`已导入独立大纲：卷 ${imported.volumes}，大纲章节 ${imported.outlineChapters}，场景 ${imported.scenes}，Beat ${imported.beats}。手稿未被修改。`);
 }
 
-async function createPlanFromOutline(storage: LoreDockStorage, outline: string): Promise<{ volumes: number; chapters: number; scenes: number; beats: number }> {
-  const result = { volumes: 0, chapters: 0, scenes: 0, beats: 0 };
-  let currentVolume: VolumeMeta | undefined;
-  let currentChapter: ChapterRef | undefined;
-  let currentScene: ScenePlan | undefined;
-  const defaultVolume = async () => {
-    if (!currentVolume) {
-      currentVolume = await storage.createVolume('大纲导入');
-      result.volumes += 1;
-    }
-    return currentVolume;
-  };
-  for (const rawLine of outline.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line) {
-      continue;
-    }
-    const heading = line.match(/^(#{1,4})\s+(.+)$/);
-    if (heading?.[1] === '#') {
-      currentVolume = await storage.createVolume(heading[2].trim());
-      currentChapter = undefined;
-      currentScene = undefined;
-      result.volumes += 1;
-      continue;
-    }
-    if (heading?.[1] === '##') {
-      const volume = await defaultVolume();
-      const chapter = await storage.createChapter(volume.id, heading[2].trim());
-      currentChapter = await storage.getChapterRef(chapter.id);
-      currentScene = undefined;
-      result.chapters += 1;
-      continue;
-    }
-    if (heading?.[1] === '###' || /^场景[:：]/.test(line)) {
-      const chapter = currentChapter ?? await createFallbackOutlineChapter(storage, await defaultVolume(), result);
-      currentScene = await storage.createScene({
-        name: heading?.[2]?.trim() || line.replace(/^场景[:：]\s*/, ''),
-        chapterId: chapter.chapter.id
-      });
-      result.scenes += 1;
-      continue;
-    }
-    if (/^[-*]\s+/.test(line)) {
-      const chapter = currentChapter ?? await createFallbackOutlineChapter(storage, await defaultVolume(), result);
-      const beat = await storage.createBeat({
-        name: shortTitle(line.replace(/^[-*]\s+/, ''), 'Beat'),
-        detail: line.replace(/^[-*]\s+/, ''),
-        chapterId: chapter.chapter.id
-      });
-      if (currentScene) {
-        const entry = await storage.findCodexEntryById(beat.id);
-        if (entry && entry.card.kind === 'beat') {
-          await storage.writeCodexEntry(entry.relativePath, { ...entry.card, sceneId: currentScene.id });
-        }
-      }
-      result.beats += 1;
-      continue;
-    }
-    const chapter = currentChapter ?? await createFallbackOutlineChapter(storage, await defaultVolume(), result);
-    currentScene = await storage.createScene({
-      name: shortTitle(line, '场景'),
-      detail: line,
-      chapterId: chapter.chapter.id
-    });
-    result.scenes += 1;
-  }
-  return result;
-}
-
-async function createFallbackOutlineChapter(storage: LoreDockStorage, volume: VolumeMeta, result: { chapters: number }): Promise<ChapterRef> {
-  const chapter = await storage.createChapter(volume.id, `大纲章节 ${result.chapters + 1}`);
-  result.chapters += 1;
-  return storage.getChapterRef(chapter.id);
+async function createPlanFromOutline(storage: LoreDockStorage, outline: string) {
+  return storage.importOutlineToPlan(outline);
 }
 
 async function rebuildReferenceIndex(getStorage: () => LoreDockStorage | undefined): Promise<void> {
@@ -608,6 +915,7 @@ async function createCharacter(getStorage: () => LoreDockStorage | undefined, co
   const name = await nextDraftName(storage, 'character', '未命名人物');
   const card = await storage.createCharacter({ name });
   codexTree.refresh();
+  refreshActiveBlueprintPanel();
   await openCreatedCodexCard(storage, card.id);
 }
 
@@ -617,6 +925,7 @@ async function createLocation(getStorage: () => LoreDockStorage | undefined, cod
   const name = await nextDraftName(storage, 'location', '未命名地点');
   const card = await storage.createLocation({ name });
   codexTree.refresh();
+  refreshActiveBlueprintPanel();
   await openCreatedCodexCard(storage, card.id);
 }
 
@@ -626,6 +935,7 @@ async function createWorldRule(getStorage: () => LoreDockStorage | undefined, co
   const name = await nextDraftName(storage, 'world-rule', '未命名规则');
   const card = await storage.createWorldRule({ name });
   codexTree.refresh();
+  refreshActiveBlueprintPanel();
   await openCreatedCodexCard(storage, card.id);
 }
 
@@ -636,17 +946,17 @@ async function createForeshadowing(getStorage: () => LoreDockStorage | undefined
   const name = await nextDraftName(storage, 'foreshadowing', '未命名伏笔');
   const card = await storage.createForeshadowing({ name, chapterId: chapter?.chapter.id });
   codexTree.refresh();
+  refreshActiveBlueprintPanel();
   await openCreatedCodexCard(storage, card.id);
 }
 
-async function createTimelineEvent(getStorage: () => LoreDockStorage | undefined, codexTree: CodexTreeProvider): Promise<void> {
+async function createTimelineEvent(context: vscode.ExtensionContext, getStorage: () => LoreDockStorage | undefined): Promise<void> {
   const storage = requireStorage(getStorage);
   await storage.requireManifest();
   const chapter = await resolveOptionalChapter(storage);
-  const name = await nextDraftName(storage, 'timeline-event', '未命名事件');
-  const card = await storage.createTimelineEvent({ name, chapterId: chapter?.chapter.id });
-  codexTree.refresh();
-  await openCreatedCodexCard(storage, card.id);
+  const document = await storage.readTimelineDocument();
+  await storage.createTimelineEvent({ name: `未命名事件 ${document.events.length + 1}`, chapterId: chapter?.chapter.id });
+  await showTimelineWorkbench(context, storage);
 }
 
 async function createScene(getStorage: () => LoreDockStorage | undefined, codexTree: CodexTreeProvider): Promise<void> {
@@ -656,6 +966,7 @@ async function createScene(getStorage: () => LoreDockStorage | undefined, codexT
   const name = await nextDraftName(storage, 'scene', '未命名场景');
   const card = await storage.createScene({ name, chapterId: chapter?.chapter.id });
   codexTree.refresh();
+  refreshActiveBlueprintPanel();
   await openCreatedCodexCard(storage, card.id);
 }
 
@@ -666,6 +977,7 @@ async function createBeat(getStorage: () => LoreDockStorage | undefined, codexTr
   const name = await nextDraftName(storage, 'beat', '未命名 Beat');
   const card = await storage.createBeat({ name, chapterId: chapter?.chapter.id });
   codexTree.refresh();
+  refreshActiveBlueprintPanel();
   await openCreatedCodexCard(storage, card.id);
 }
 
@@ -792,31 +1104,10 @@ async function showForeshadowingBoard(getStorage: () => LoreDockStorage | undefi
   await showMarkdownDocument('LoreDock 伏笔看板', lines.join('\n'));
 }
 
-async function showTimelineBoard(getStorage: () => LoreDockStorage | undefined): Promise<void> {
+async function openTimelineWorkbench(context: vscode.ExtensionContext, getStorage: () => LoreDockStorage | undefined): Promise<void> {
   const storage = requireStorage(getStorage);
   await storage.requireManifest();
-  const chapterNames = await chapterNameMap(storage);
-  const events = (await storage.listCodexEntries('timeline-event'))
-    .map((entry) => entry.card as TimelineEvent)
-    .sort((a, b) => (a.storyTime || '').localeCompare(b.storyTime || '', 'zh-Hans-CN') || a.name.localeCompare(b.name, 'zh-Hans-CN'));
-  const lines = [
-    '# LoreDock 时间线看板',
-    '',
-    `总事件：${events.length}`,
-    '',
-    ...events.map((event) =>
-      [
-        `## ${event.storyTime || '未填写时间'} · ${event.name}`,
-        `- 章节：${event.chapterId ? chapterNames.get(event.chapterId) || event.chapterId : '未关联'}`,
-        `- 地点：${event.location || '未填写'}`,
-        `- 参与人物：${event.participants.length ? event.participants.join('、') : '未填写'}`,
-        `- 可见性：${event.visibility}`,
-        `- 结果：${event.result || '未填写'}`,
-        ''
-      ].join('\n')
-    )
-  ];
-  await showMarkdownDocument('LoreDock 时间线看板', lines.join('\n'));
+  await showTimelineWorkbench(context, storage);
 }
 
 async function showSceneBeatBoard(getStorage: () => LoreDockStorage | undefined): Promise<void> {
@@ -918,10 +1209,20 @@ async function reviewPendingCodexUpdates(
   vscode.window.showInformationMessage(`摘要建议处理完成，已写入 ${applied} 条。`);
 }
 
-async function openSettings(getStorage: () => LoreDockStorage | undefined): Promise<void> {
+async function openSettings(context: vscode.ExtensionContext, getStorage: () => LoreDockStorage | undefined): Promise<void> {
   const storage = requireStorage(getStorage);
   await storage.requireManifest();
   const actions: Array<{ label: string; description?: string; run: () => Promise<void> | void }> = [
+    {
+      label: '项目仪表盘',
+      description: '查看写作统计、健康问题和近期章节',
+      run: () => showProjectDashboard(context, getStorage)
+    },
+    {
+      label: '打开大纲蓝图',
+      description: '可视化组织大纲和资料卡关系',
+      run: () => openBlueprintOutline(context, getStorage)
+    },
     {
       label: '打开文风指南',
       description: '维护叙事视角、表达偏好和禁用事项',
@@ -941,6 +1242,26 @@ async function openSettings(getStorage: () => LoreDockStorage | undefined): Prom
       label: '显示写作统计',
       description: '查看卷、章节、字数和状态分布',
       run: () => showWritingStats(getStorage)
+    },
+    {
+      label: '项目健康检查',
+      description: '输出只读结构问题清单',
+      run: () => showProjectHealth(context, getStorage)
+    },
+    {
+      label: '预览项目健康安全修复',
+      description: '清理失效 summaryId，整理重复的场景/Beat order',
+      run: async () => { await previewProjectHealthFixes(getStorage); }
+    },
+    {
+      label: '保存当前健康问题为基线',
+      description: '以后只突出新增/未忽略问题',
+      run: () => saveProjectHealthBaseline(getStorage)
+    },
+    {
+      label: '清空健康基线',
+      description: '重新显示所有健康问题',
+      run: () => clearProjectHealthBaseline(getStorage)
     },
     {
       label: '查看引用索引',
@@ -1051,6 +1372,96 @@ async function exportManuscript(getStorage: () => LoreDockStorage | undefined): 
 async function showWritingStats(getStorage: () => LoreDockStorage | undefined): Promise<void> {
   const storage = requireStorage(getStorage);
   showStatsPanel(await storage.getWritingStats());
+}
+
+async function showProjectDashboard(context: vscode.ExtensionContext, getStorage: () => LoreDockStorage | undefined): Promise<void> {
+  const storage = requireStorage(getStorage);
+  showDashboardPanel(context, await storage.getProjectDashboard(), async (action: DashboardPanelAction) => {
+    if (action.command === 'refresh') {
+      return storage.getProjectDashboard();
+    }
+    if (action.command === 'show-health') {
+      await showProjectHealth(context, () => storage);
+      return undefined;
+    }
+    if (action.command === 'show-stats') {
+      await showWritingStats(() => storage);
+      return undefined;
+    }
+    if (action.command === 'open-source') {
+      await openHealthSource(storage, action.source);
+      return undefined;
+    }
+    return undefined;
+  });
+}
+
+async function showProjectHealth(context: vscode.ExtensionContext, getStorage: () => LoreDockStorage | undefined): Promise<void> {
+  const storage = requireStorage(getStorage);
+  showHealthPanel(context, await storage.buildProjectHealthReport(), async (action: HealthPanelAction) => {
+    if (action.command === 'refresh') {
+      return storage.buildProjectHealthReport();
+    }
+    if (action.command === 'preview-fix') {
+      await previewProjectHealthFixes(() => storage);
+      return undefined;
+    }
+    if (action.command === 'fix') {
+      await fixProjectHealth(() => storage);
+      return storage.buildProjectHealthReport();
+    }
+    if (action.command === 'save-baseline') {
+      await saveProjectHealthBaseline(() => storage);
+      return storage.buildProjectHealthReport();
+    }
+    if (action.command === 'clear-baseline') {
+      await clearProjectHealthBaseline(() => storage);
+      return storage.buildProjectHealthReport();
+    }
+    if (action.command === 'open-source') {
+      await openHealthSource(storage, action.source);
+      return undefined;
+    }
+    return undefined;
+  });
+}
+
+async function previewProjectHealthFixes(getStorage: () => LoreDockStorage | undefined): Promise<ProjectHealthFixReport> {
+  const storage = requireStorage(getStorage);
+  const preview = await storage.previewProjectHealthBasicsFixes();
+  const healthReport = await storage.buildProjectHealthReport();
+  await showMarkdownDocument('LoreDock 项目健康安全修复预览', formatProjectHealthFixReport(preview, healthReport, storage.workspaceRoot, true));
+  return preview;
+}
+
+async function fixProjectHealth(getStorage: () => LoreDockStorage | undefined): Promise<void> {
+  const storage = requireStorage(getStorage);
+  const preview = await storage.previewProjectHealthBasicsFixes();
+  const willChange = preview.actions.some((action) => action.willChange);
+  await showMarkdownDocument('LoreDock 项目健康安全修复预览', formatProjectHealthFixReport(preview, await storage.buildProjectHealthReport(), storage.workspaceRoot, true));
+  if (!willChange) {
+    vscode.window.showInformationMessage('没有可执行的安全修复。');
+    return;
+  }
+  const answer = await vscode.window.showWarningMessage('确认执行项目健康安全修复？', { modal: true }, '执行安全修复');
+  if (answer !== '执行安全修复') {
+    return;
+  }
+  const fixReport = await storage.fixProjectHealthBasics();
+  const healthReport = await storage.buildProjectHealthReport();
+  await showMarkdownDocument('LoreDock 项目健康安全修复', formatProjectHealthFixReport(fixReport, healthReport, storage.workspaceRoot));
+}
+
+async function saveProjectHealthBaseline(getStorage: () => LoreDockStorage | undefined): Promise<void> {
+  const storage = requireStorage(getStorage);
+  const baseline = await storage.saveCurrentProjectHealthBaseline();
+  vscode.window.showInformationMessage(`已保存健康基线：${baseline.fingerprints.length} 个问题将作为已知项。`);
+}
+
+async function clearProjectHealthBaseline(getStorage: () => LoreDockStorage | undefined): Promise<void> {
+  const storage = requireStorage(getStorage);
+  await storage.clearProjectHealthBaseline();
+  vscode.window.showInformationMessage('已清空健康基线。');
 }
 
 async function runLocalConsistencyCheck(getStorage: () => LoreDockStorage | undefined, node?: unknown): Promise<void> {
@@ -1242,6 +1653,160 @@ function formatBeatLine(beat: BeatPlan): string {
   return `- ${beat.order}. **${beat.name}** · ${beat.status} · ${beat.content || '未填写内容'}${beat.purpose ? ` · 目的：${beat.purpose}` : ''}`;
 }
 
+function formatProjectHealthReport(report: ProjectHealthReport, workspaceRoot: string): string {
+  const severities: ProjectHealthSeverity[] = ['error', 'warning', 'info'];
+  const categories: ProjectHealthCategory[] = ['manuscript', 'codex', 'plan', 'timeline', 'foreshadowing', 'references'];
+  const lines = [
+    `# LoreDock 项目健康检查：${report.projectTitle}`,
+    '',
+    `生成时间：${report.generatedAt}`,
+    `未忽略汇总：${healthSeverityLabel('error')} ${report.summary.error} · ${healthSeverityLabel('warning')} ${report.summary.warning} · ${healthSeverityLabel('info')} ${report.summary.info}`,
+    `全部汇总：${healthSeverityLabel('error')} ${report.totalSummary.error} · ${healthSeverityLabel('warning')} ${report.totalSummary.warning} · ${healthSeverityLabel('info')} ${report.totalSummary.info} · 已忽略 ${report.ignoredCount}`,
+    ''
+  ];
+
+  if (report.issues.length === 0) {
+    lines.push('未发现结构问题。');
+    return lines.join('\n');
+  }
+
+  for (const severity of severities) {
+    const severityIssues = report.issues.filter((issue) => issue.severity === severity);
+    if (severityIssues.length === 0) {
+      continue;
+    }
+    lines.push(`## ${healthSeverityLabel(severity)}（${severityIssues.length}）`, '');
+    for (const category of categories) {
+      const categoryIssues = severityIssues.filter((issue) => issue.category === category);
+      if (categoryIssues.length === 0) {
+        continue;
+      }
+      lines.push(`### ${healthCategoryLabel(category)}（${categoryIssues.length}）`, '');
+      for (const issue of categoryIssues) {
+        lines.push(
+          `- **${issue.title}**`,
+          issue.ignored ? '  - 状态：已在健康基线中忽略' : '',
+          `  - 来源：${formatHealthSource(issue.source, workspaceRoot)}`,
+          `  - 说明：${issue.detail}`,
+          `  - 建议：${issue.suggestion}`,
+          ''
+        );
+      }
+    }
+  }
+  return lines.join('\n');
+}
+
+function formatProjectHealthFixReport(fixReport: ProjectHealthFixReport, healthReport: ProjectHealthReport, workspaceRoot: string, preview = false): string {
+  const lines = [
+    `# LoreDock 项目健康安全修复${preview ? '预览' : ''}：${healthReport.projectTitle}`,
+    '',
+    `${preview ? '预览时间' : '修复时间'}：${fixReport.fixedAt}`,
+    '',
+    preview ? '## 将执行的动作' : '## 执行动作',
+    ''
+  ];
+  for (const action of fixReport.actions) {
+    const state = preview ? (action.willChange ? '将修改' : '无需修改') : (action.changed ? '已修改' : '无需修改');
+    lines.push(`- **${action.title}**：${state}`, `  - ${action.detail}`);
+    if (action.affectedSources?.length) {
+      lines.push(`  - 影响：${action.affectedSources.map((source) => formatHealthSource(source, workspaceRoot)).join('、')}`);
+    }
+  }
+  lines.push(
+    '',
+    '## 修复后健康概况',
+    '',
+    `汇总：${healthSeverityLabel('error')} ${healthReport.summary.error} · ${healthSeverityLabel('warning')} ${healthReport.summary.warning} · ${healthSeverityLabel('info')} ${healthReport.summary.info}`,
+    ''
+  );
+  if (healthReport.issues.length === 0) {
+    lines.push('未发现结构问题。');
+  } else {
+    lines.push('仍需人工处理的问题：', '');
+    for (const issue of healthReport.issues.slice(0, 30)) {
+      lines.push(`- **${healthSeverityLabel(issue.severity)} / ${healthCategoryLabel(issue.category)} / ${issue.title}**`);
+      lines.push(`  - 来源：${formatHealthSource(issue.source, workspaceRoot)}`);
+      lines.push(`  - 建议：${issue.suggestion}`);
+    }
+    if (healthReport.issues.length > 30) {
+      lines.push('', `其余 ${healthReport.issues.length - 30} 个问题请重新运行项目健康检查查看完整列表。`);
+    }
+  }
+  return lines.join('\n');
+}
+
+function isSafelyFixableHealthIssue(issue: { title: string }): boolean {
+  return ['章节摘要引用缺失', '场景顺序重复', 'Beat顺序重复'].includes(issue.title);
+}
+
+async function openHealthSource(storage: LoreDockStorage, source: string): Promise<void> {
+  const clean = source.split(',')[0]?.trim();
+  if (!clean || !isWorkspaceRelativeSource(clean)) {
+    vscode.window.showInformationMessage(`无法直接打开来源：${source}`);
+    return;
+  }
+  try {
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(storage.resolve(clean)));
+    await vscode.window.showTextDocument(document, { preview: false, viewColumn: vscode.ViewColumn.Beside });
+  } catch (error) {
+    vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+  }
+}
+
+function formatHealthSource(source: string | undefined, workspaceRoot: string): string {
+  if (!source) {
+    return '未指定';
+  }
+  return source
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => {
+      if (!isWorkspaceRelativeSource(item)) {
+        return escapeMarkdownInline(item);
+      }
+      const uri = vscode.Uri.file(path.join(workspaceRoot, ...item.split('/'))).toString();
+      return `[${escapeMarkdownInline(item)}](${uri})`;
+    })
+    .join('、');
+}
+
+function isWorkspaceRelativeSource(source: string): boolean {
+  return (
+    source === '.loredock/project.json' ||
+    source.startsWith('.loredock/') ||
+    source.startsWith('manuscript/') ||
+    source.startsWith('codex/') ||
+    source.startsWith('exports/')
+  );
+}
+
+function escapeMarkdownInline(value: string): string {
+  return value.replace(/([\\`*_\[\]()#])/g, '\\$1');
+}
+
+function healthSeverityLabel(severity: ProjectHealthSeverity): string {
+  const labels: Record<ProjectHealthSeverity, string> = {
+    error: '错误',
+    warning: '警告',
+    info: '提示'
+  };
+  return labels[severity];
+}
+
+function healthCategoryLabel(category: ProjectHealthCategory): string {
+  const labels: Record<ProjectHealthCategory, string> = {
+    manuscript: '手稿结构',
+    codex: '资料库结构',
+    plan: '规划结构',
+    timeline: '时间线结构',
+    foreshadowing: '伏笔结构',
+    references: '引用结构'
+  };
+  return labels[category];
+}
+
 async function showConsistencyIssueReport(ref: ChapterRef, issues: ConsistencyIssue[]): Promise<void> {
   const severities: ConsistencyIssue['severity'][] = ['严重问题', '中等问题', '轻微问题', '建议优化'];
   const lines = [
@@ -1281,7 +1846,6 @@ function kindLabel(kind: CodexCard['kind']): string {
     location: '地点卡',
     'world-rule': '世界规则',
     foreshadowing: '伏笔',
-    'timeline-event': '时间线事件',
     scene: '场景',
     beat: 'Beat'
   };

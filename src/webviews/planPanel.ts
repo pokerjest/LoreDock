@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { BeatPlan, ChapterRef, CodexCard, ScenePlan } from '../types';
+import { BeatPlan, ChapterRef, CodexCard, OutlineDocument, ScenePlan } from '../types';
 import { cspSource, escapeHtml, nonce } from './webviewUtils';
 
 export interface PlanPanelChapter {
@@ -11,12 +11,16 @@ export interface PlanPanelChapter {
 export interface PlanPanelState {
   title: string;
   chapters: PlanPanelChapter[];
+  outlines: OutlineDocument[];
+  outlineScenes: ScenePlan[];
+  outlineBeats: BeatPlan[];
   codexCards: CodexCard[];
   references: Map<string, Set<string>>;
 }
 
 export type PlanPanelAction =
   | { command: 'import-outline' }
+  | { command: 'open-blueprint' }
   | { command: 'refresh' };
 
 export function showPlanPanel(
@@ -78,10 +82,11 @@ function renderPlanPanel(state: PlanPanelState): string {
   <header>
     <div>
       <h1>${escapeHtml(state.title)} · Plan / Matrix</h1>
-      <div class="meta">${state.chapters.length} 章 · ${state.chapters.reduce((sum, item) => sum + item.scenes.length, 0)} 场景 · ${state.chapters.reduce((sum, item) => sum + item.beats.length, 0)} Beat</div>
+      <div class="meta">手稿 ${state.chapters.length} 章 · 独立大纲 ${state.outlines.length} 份 · 规划场景 ${state.chapters.reduce((sum, item) => sum + item.scenes.length, 0) + state.outlineScenes.length} · Beat ${state.chapters.reduce((sum, item) => sum + item.beats.length, 0) + state.outlineBeats.length}</div>
     </div>
     <div class="actions">
-      <button class="secondary" data-command="import-outline">从大纲创建</button>
+      <button class="secondary" data-command="import-outline">导入独立大纲</button>
+      <button class="secondary" data-command="open-blueprint">打开大纲蓝图</button>
       <button class="secondary" data-command="refresh">刷新</button>
     </div>
   </header>
@@ -114,16 +119,19 @@ function renderPlanPanel(state: PlanPanelState): string {
 }
 
 function renderGrid(state: PlanPanelState): string {
-  if (state.chapters.length === 0) {
-    return '<div class="empty">还没有章节。</div>';
-  }
-  return `<div class="grid">${state.chapters.map((item) => `
+  const manuscript = state.chapters.length
+    ? `<h2>手稿结构</h2><div class="grid">${state.chapters.map((item) => `
     <article class="card">
       <h2>${escapeHtml(item.ref.volume.title)} / ${escapeHtml(item.ref.chapter.title)}</h2>
       <div class="meta">${escapeHtml(item.ref.chapter.status)} · ${item.ref.chapter.wordCount} 字</div>
       ${item.scenes.length ? item.scenes.map((scene) => renderScene(scene, item.beats.filter((beat) => beat.sceneId === scene.id || beat.chapterId === item.ref.chapter.id))).join('') : '<div class="empty">无场景计划</div>'}
     </article>
-  `).join('')}</div>`;
+  `).join('')}</div>`
+    : '<h2>手稿结构</h2><div class="empty">还没有手稿章节。</div>';
+  const outlines = state.outlines.length
+    ? `<h2>独立大纲</h2><div class="grid">${state.outlines.map((outline) => renderOutlineCard(outline, state)).join('')}</div>`
+    : '<h2>独立大纲</h2><div class="empty">还没有独立大纲。</div>';
+  return `${manuscript}${outlines}`;
 }
 
 function renderScene(scene: ScenePlan, beats: BeatPlan[]): string {
@@ -150,8 +158,8 @@ function renderMatrix(state: PlanPanelState): string {
 }
 
 function renderOutline(state: PlanPanelState): string {
-  return `<div class="outline">${escapeHtml(state.chapters.map((item) => [
-    `# ${item.ref.volume.title} / ${item.ref.chapter.title}`,
+  const manuscriptOutline = state.chapters.map((item) => [
+    `# 手稿：${item.ref.volume.title} / ${item.ref.chapter.title}`,
     ...item.scenes.map((scene) => [
       `## ${scene.name}`,
       scene.summary || scene.conflict || '',
@@ -159,5 +167,19 @@ function renderOutline(state: PlanPanelState): string {
       scene.location ? `地点：${scene.location}` : '',
       ...item.beats.filter((beat) => beat.sceneId === scene.id || beat.chapterId === item.ref.chapter.id).map((beat) => `- ${beat.content || beat.name}`)
     ].filter(Boolean).join('\n'))
-  ].join('\n')).join('\n\n'))}</div>`;
+  ].join('\n')).join('\n\n');
+  const importedOutlines = state.outlines.map((outline) => `# 独立大纲：${outline.title}\n\n${outline.rawText}`).join('\n\n');
+  return `<div class="outline">${escapeHtml([manuscriptOutline, importedOutlines].filter(Boolean).join('\n\n')) || '<span class="empty">还没有手稿规划或独立大纲。</span>'}</div>`;
+}
+
+function renderOutlineCard(outline: OutlineDocument, state: PlanPanelState): string {
+  const scenes = state.outlineScenes.filter((scene) => scene.outlineId === outline.id);
+  const beats = state.outlineBeats.filter((beat) => beat.outlineId === outline.id);
+  const volumes = outline.nodes.filter((node) => node.type === 'volume').length;
+  const chapters = outline.nodes.filter((node) => node.type === 'chapter').length;
+  return `<article class="card">
+    <h2>${escapeHtml(outline.title)}</h2>
+    <div class="meta">${volumes} 卷 · ${chapters} 大纲章节 · ${scenes.length} 场景 · ${beats.length} Beat</div>
+    ${scenes.length ? scenes.map((scene) => renderScene(scene, beats.filter((beat) => beat.sceneId === scene.id || beat.outlineChapterTitle === scene.outlineChapterTitle))).join('') : `<div class="outline">${escapeHtml(outline.rawText.slice(0, 1000))}</div>`}
+  </article>`;
 }

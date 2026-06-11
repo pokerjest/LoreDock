@@ -183,22 +183,6 @@ function fieldsForKind(kind: CodexCard['kind']): Field[] {
       { key: 'allowRevealInContext', label: '允许上下文包含隐藏真相', type: 'checkbox' }
     ];
   }
-  if (kind === 'timeline-event') {
-    return [
-      { key: 'sequence', label: '事件顺序', type: 'text' },
-      { key: 'storyTime', label: '故事时间', type: 'text' },
-      { key: 'chapterId', label: '关联章节 ID', type: 'text' },
-      { key: 'location', label: '地点', type: 'text' },
-      { key: 'participants', label: '参与人物（逗号分隔）', type: 'array' },
-      { key: 'causes', label: '原因事件 ID/名称（逗号分隔）', type: 'array' },
-      { key: 'consequences', label: '后果事件 ID/名称（逗号分隔）', type: 'array' },
-      { key: 'knownBy', label: '知情者（逗号分隔）', type: 'array' },
-      { key: 'unknownBy', label: '不知情者（逗号分隔）', type: 'array' },
-      { key: 'relationshipEffects', label: '关系影响 JSON', type: 'json' },
-      { key: 'result', label: '结果', type: 'textarea' },
-      { key: 'visibility', label: '可见性', type: 'select', options: ['reader-unknown', 'character-unknown', 'public'] }
-    ];
-  }
   if (kind === 'scene') {
     return [
       { key: 'chapterId', label: '章节 ID', type: 'text' },
@@ -247,7 +231,6 @@ function kindLabel(kind: CodexCard['kind']): string {
     location: '地点卡',
     'world-rule': '世界规则',
     foreshadowing: '伏笔',
-    'timeline-event': '时间线事件',
     scene: '场景',
     beat: 'Beat'
   };

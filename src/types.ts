@@ -47,6 +47,167 @@ export interface ProjectInitOptions {
   force?: boolean;
 }
 
+export type OutlineNodeType = 'volume' | 'chapter' | 'scene' | 'beat' | 'note';
+
+export interface OutlineNode {
+  id: string;
+  type: OutlineNodeType;
+  title: string;
+  content: string;
+  order: number;
+  parentId?: string;
+  sourceLine: number;
+}
+
+export interface OutlineDocument {
+  schemaVersion: 1;
+  id: string;
+  title: string;
+  rawText: string;
+  nodes: OutlineNode[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OutlineImportResult {
+  document: OutlineDocument;
+  volumes: number;
+  outlineChapters: number;
+  scenes: number;
+  beats: number;
+}
+
+export type BlueprintNodeKind = 'outline' | 'codex' | 'scene' | 'beat' | 'note';
+export type BlueprintRefKind = CodexCard['kind'] | 'timeline-event' | 'outline' | 'outline-node';
+export type BlueprintEdgeType = 'flow' | 'uses' | 'foreshadows' | 'resolves' | 'conflicts' | 'supports' | 'blocks' | 'custom';
+export type BlueprintSyncStatus = 'pull' | 'push' | 'conflict' | 'missing' | 'unchanged';
+export type BlueprintSyncAction = 'pull' | 'push' | 'delete-source' | 'skip';
+export type BlueprintNodeSourceStatus = 'local' | 'linked' | 'missing' | 'stale' | 'conflict';
+
+export interface BlueprintSyncSnapshot {
+  title: string;
+  note: string;
+  syncedAt: string;
+  sourceUpdatedAt?: string;
+}
+
+export interface BlueprintNode {
+  id: string;
+  kind: BlueprintNodeKind;
+  title: string;
+  refKind?: BlueprintRefKind;
+  refId?: string;
+  refPath?: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  note?: string;
+  color?: string;
+  lastSynced?: BlueprintSyncSnapshot;
+}
+
+export interface BlueprintEdge {
+  id: string;
+  fromNodeId: string;
+  toNodeId: string;
+  type: BlueprintEdgeType;
+  label?: string;
+}
+
+export interface BlueprintDocument {
+  schemaVersion: 1;
+  id: string;
+  title: string;
+  outlineId?: string;
+  outlinePath?: string;
+  nodes: BlueprintNode[];
+  edges: BlueprintEdge[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BlueprintResource {
+  id: string;
+  title: string;
+  kind: BlueprintRefKind;
+  relativePath: string;
+  detail?: string;
+}
+
+export interface BlueprintPanelState {
+  blueprints: BlueprintDocument[];
+  current: BlueprintDocument;
+  resources: BlueprintResource[];
+  nodeSemantics: Record<string, BlueprintNodeSemanticSummary>;
+  edgeSemanticIssues: BlueprintEdgeSemanticIssue[];
+  syncPreview?: BlueprintSyncPreview;
+  syncResult?: BlueprintSyncResult;
+}
+
+export interface BlueprintNodeSemanticSummary {
+  nodeId: string;
+  label: string;
+  badge: string;
+  status: BlueprintNodeSourceStatus;
+  lines: string[];
+  sourcePath?: string;
+}
+
+export interface BlueprintEdgeSemanticIssue {
+  edgeId: string;
+  severity: 'warning' | 'info';
+  title: string;
+  detail: string;
+  suggestion: string;
+}
+
+export interface BlueprintSyncFieldDiff {
+  field: 'title' | 'note';
+  label: string;
+  nodeValue: string;
+  sourceValue: string;
+  changed: boolean;
+}
+
+export interface BlueprintSyncItem {
+  id: string;
+  nodeId: string;
+  nodeTitle: string;
+  nodeNote: string;
+  refKind: BlueprintRefKind;
+  refId?: string;
+  refPath?: string;
+  sourceTitle?: string;
+  sourceNote?: string;
+  sourceUpdatedAt?: string;
+  status: BlueprintSyncStatus;
+  detail: string;
+  defaultAction: BlueprintSyncAction;
+  fieldDiffs: BlueprintSyncFieldDiff[];
+}
+
+export interface BlueprintSyncDecision {
+  itemId: string;
+  action: BlueprintSyncAction;
+}
+
+export interface BlueprintSyncPreview {
+  schemaVersion: 1;
+  blueprintId: string;
+  generatedAt: string;
+  items: BlueprintSyncItem[];
+  summary: Record<BlueprintSyncStatus, number>;
+}
+
+export interface BlueprintSyncResult {
+  applied: number;
+  skipped: number;
+  pulled: number;
+  pushed: number;
+  deletedSources?: number;
+}
+
 export interface CharacterRelationship {
   target: string;
   type?: string;
@@ -110,7 +271,7 @@ export interface CodexProgression {
 export interface BaseCodexCard {
   schemaVersion: 1;
   id: string;
-  kind: 'character' | 'location' | 'world-rule' | 'foreshadowing' | 'timeline-event' | 'scene' | 'beat';
+  kind: 'character' | 'location' | 'world-rule' | 'foreshadowing' | 'scene' | 'beat';
   name: string;
   aliases: string[];
   tags: string[];
@@ -121,6 +282,7 @@ export interface BaseCodexCard {
   memoryStatus?: CodexMemoryStatus;
   summary?: string;
   sourceRefs?: CodexSourceRef[];
+  ignoredReferenceTerms?: string[];
   inferences?: CodexInference[];
   progressions?: CodexProgression[];
   createdAt: string;
@@ -193,25 +355,115 @@ export interface ForeshadowingCard extends BaseCodexCard {
   hiddenTruth: string;
 }
 
-export interface TimelineEvent extends BaseCodexCard {
+export interface TimelineCalendar {
+  worldCreatedAt: string;
+  calendarName: string;
+  eraLabel: string;
+  note: string;
+}
+
+export interface TimelinePoint {
+  label: string;
+  sortValue: number;
+  era?: string;
+  year?: string;
+  month?: string;
+  day?: string;
+  timeOfDay?: string;
+}
+
+export type TimelineEventVisibility = 'reader-unknown' | 'character-unknown' | 'public';
+export type TimelineEventType = 'world' | 'plot' | 'character' | 'location' | 'relationship' | 'custom';
+export type TimelineLaneType = 'world' | 'plot' | 'character' | 'location' | 'chapter';
+export type TimelineEventImportance = 'minor' | 'normal' | 'major' | 'turning-point';
+export type TimelineEventStatus = 'planned' | 'drafted' | 'locked';
+
+export interface TimelineEvent {
+  schemaVersion: 1;
+  id: string;
   kind: 'timeline-event';
-  sequence?: number;
-  storyTime: string;
+  title: string;
+  summary: string;
+  type: TimelineEventType;
+  laneType: TimelineLaneType;
+  importance: TimelineEventImportance;
+  status: TimelineEventStatus;
+  locked?: boolean;
+  color?: string;
+  notes?: string;
+  start: TimelinePoint;
+  end?: TimelinePoint;
   chapterId?: string;
+  sceneId?: string;
+  beatId?: string;
   location: string;
+  locationId?: string;
   participants: string[];
+  participantIds?: string[];
   causes?: string[];
   consequences?: string[];
   knownBy?: string[];
   unknownBy?: string[];
   relationshipEffects?: CharacterRelationship[];
   result: string;
-  visibility: 'reader-unknown' | 'character-unknown' | 'public';
+  visibility: TimelineEventVisibility;
+  tags: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TimelineLane {
+  id: string;
+  type: TimelineLaneType;
+  title: string;
+  refId?: string;
+}
+
+export type TimelineConflictSeverity = 'warning' | 'info';
+export type TimelineConflictKind = 'bad-range' | 'missing-reference' | 'multi-location' | 'weak-binding';
+
+export interface TimelineConflict {
+  id: string;
+  eventIds: string[];
+  severity: TimelineConflictSeverity;
+  kind: TimelineConflictKind;
+  title: string;
+  detail: string;
+}
+
+export interface TimelineResolvedEvent extends TimelineEvent {
+  resolvedLocation?: string;
+  resolvedParticipants: string[];
+  resolvedChapter?: string;
+  resolvedScene?: string;
+  resolvedBeat?: string;
+  conflictIds: string[];
+}
+
+export interface TimelineResolvedView {
+  document: TimelineDocument;
+  lanes: TimelineLane[];
+  events: TimelineResolvedEvent[];
+  conflicts: TimelineConflict[];
+}
+
+export interface TimelineDocument {
+  schemaVersion: 1;
+  id: string;
+  title: string;
+  calendar: TimelineCalendar;
+  events: TimelineEvent[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ScenePlan extends BaseCodexCard {
   kind: 'scene';
   chapterId?: string;
+  outlineId?: string;
+  outlineNodeId?: string;
+  outlineVolumeTitle?: string;
+  outlineChapterTitle?: string;
   viewpointCharacter: string;
   location: string;
   conflict: string;
@@ -224,13 +476,17 @@ export interface BeatPlan extends BaseCodexCard {
   kind: 'beat';
   chapterId?: string;
   sceneId?: string;
+  outlineId?: string;
+  outlineNodeId?: string;
+  outlineVolumeTitle?: string;
+  outlineChapterTitle?: string;
   content: string;
   purpose: string;
   order: number;
   status: 'planned' | 'expanded' | 'discarded';
 }
 
-export type CodexCard = CharacterCard | LocationCard | WorldRule | ForeshadowingCard | TimelineEvent | ScenePlan | BeatPlan;
+export type CodexCard = CharacterCard | LocationCard | WorldRule | ForeshadowingCard | ScenePlan | BeatPlan;
 
 export interface ChapterSummary {
   schemaVersion: 1;
@@ -296,6 +552,52 @@ export interface ConsistencyIssue {
   suggestion: string;
 }
 
+export type ProjectHealthSeverity = 'error' | 'warning' | 'info';
+export type ProjectHealthCategory = 'manuscript' | 'codex' | 'plan' | 'timeline' | 'foreshadowing' | 'references';
+
+export interface ProjectHealthIssue {
+  fingerprint?: string;
+  severity: ProjectHealthSeverity;
+  category: ProjectHealthCategory;
+  title: string;
+  detail: string;
+  source?: string;
+  suggestion: string;
+  ignored?: boolean;
+  fixable?: boolean;
+}
+
+export interface ProjectHealthReport {
+  schemaVersion: 1;
+  generatedAt: string;
+  projectTitle: string;
+  summary: Record<ProjectHealthSeverity, number>;
+  totalSummary: Record<ProjectHealthSeverity, number>;
+  ignoredCount: number;
+  newCount: number;
+  issues: ProjectHealthIssue[];
+}
+
+export interface ProjectHealthFixAction {
+  title: string;
+  detail: string;
+  changed: boolean;
+  willChange?: boolean;
+  affectedSources?: string[];
+}
+
+export interface ProjectHealthFixReport {
+  schemaVersion: 1;
+  fixedAt: string;
+  actions: ProjectHealthFixAction[];
+}
+
+export interface ProjectHealthBaseline {
+  schemaVersion: 1;
+  updatedAt: string;
+  fingerprints: string[];
+}
+
 export interface WritingStats {
   projectTitle: string;
   volumeCount: number;
@@ -312,6 +614,17 @@ export interface WritingStats {
     chapterCount: number;
     wordCount: number;
   }>;
+}
+
+export interface ProjectDashboard {
+  projectTitle: string;
+  generatedAt: string;
+  stats: WritingStats;
+  health: ProjectHealthReport;
+  topIssues: ProjectHealthIssue[];
+  overdueForeshadowing: ForeshadowingCard[];
+  recentChapters: ChapterRef[];
+  unreferencedImportantCards: CodexEntry[];
 }
 
 export interface ChapterRef {

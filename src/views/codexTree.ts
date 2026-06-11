@@ -6,7 +6,7 @@ export type CodexNode = CodexCategoryNode | CodexEntryNode | EmptyCodexNode;
 
 interface CodexCategoryNode {
   kind: 'category';
-  id: 'characters' | 'locations' | 'worldRules' | 'foreshadowing' | 'timeline' | 'scenes' | 'beats';
+  id: 'characters' | 'locations' | 'worldRules' | 'foreshadowing' | 'scenes' | 'beats';
   label: string;
   cardKind: CodexCard['kind'];
   icon: string;
@@ -27,7 +27,6 @@ const CATEGORIES: CodexCategoryNode[] = [
   { kind: 'category', id: 'locations', label: '地点', cardKind: 'location', icon: 'location' },
   { kind: 'category', id: 'worldRules', label: '世界规则', cardKind: 'world-rule', icon: 'law' },
   { kind: 'category', id: 'foreshadowing', label: '伏笔', cardKind: 'foreshadowing', icon: 'symbol-key' },
-  { kind: 'category', id: 'timeline', label: '时间线', cardKind: 'timeline-event', icon: 'timeline' },
   { kind: 'category', id: 'scenes', label: '场景', cardKind: 'scene', icon: 'layout' },
   { kind: 'category', id: 'beats', label: 'Beat', cardKind: 'beat', icon: 'list-ordered' }
 ];
@@ -109,9 +108,6 @@ function describeCard(card: CodexCard): string {
   if (card.kind === 'foreshadowing') {
     return `${card.status} · ${card.importance}`;
   }
-  if (card.kind === 'timeline-event') {
-    return card.storyTime || card.location || card.visibility;
-  }
   if (card.kind === 'scene') {
     return card.chapterId || card.location || `场景 ${card.order}`;
   }
@@ -138,9 +134,6 @@ function iconForCard(card: CodexCard): string {
   }
   if (card.kind === 'foreshadowing') {
     return 'symbol-key';
-  }
-  if (card.kind === 'timeline-event') {
-    return 'timeline';
   }
   if (card.kind === 'scene') {
     return 'layout';

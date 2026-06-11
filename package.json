@@ -28,18 +28,29 @@
   "activationEvents": [
     "workspaceContains:.loredock/project.json",
     "onView:loredock.manuscript",
+    "onView:loredock.outlines",
     "onView:loredock.codex",
     "onCommand:loredock.initProject",
     "onCommand:loredock.openSettings",
     "onCommand:loredock.openPlanView",
+    "onCommand:loredock.openBlueprintOutline",
+    "onCommand:loredock.openTimelineWorkbench",
+    "onCommand:loredock.openBlueprintForOutline",
+    "onCommand:loredock.openOutlineSource",
     "onCommand:loredock.importOutlineToPlan",
     "onCommand:loredock.rebuildReferenceIndex",
     "onCommand:loredock.showReferenceIndex",
+    "onCommand:loredock.showProjectHealth",
+    "onCommand:loredock.fixProjectHealth",
     "onCommand:loredock.exportCodexZip",
     "onCommand:loredock.importCodexZip",
     "onCommand:loredock.openStyleGuide",
     "onCommand:loredock.importManuscript",
-    "onCommand:loredock.exportManuscript"
+    "onCommand:loredock.exportManuscript",
+    "onCommand:loredock.showProjectDashboard",
+    "onCommand:loredock.previewProjectHealthFixes",
+    "onCommand:loredock.saveProjectHealthBaseline",
+    "onCommand:loredock.clearProjectHealthBaseline"
   ],
   "main": "./out/extension.js",
   "scripts": {
@@ -72,6 +83,10 @@
         {
           "id": "loredock.manuscript",
           "name": "手稿"
+        },
+        {
+          "id": "loredock.outlines",
+          "name": "大纲"
         },
         {
           "id": "loredock.codex",
@@ -189,6 +204,10 @@
         "title": "LoreDock: 时间线看板"
       },
       {
+        "command": "loredock.openTimelineWorkbench",
+        "title": "LoreDock: 打开时间线工作台"
+      },
+      {
         "command": "loredock.showSceneBeatBoard",
         "title": "LoreDock: 场景 / Beat 看板"
       },
@@ -209,8 +228,20 @@
         "title": "LoreDock: 打开 Plan / Matrix"
       },
       {
+        "command": "loredock.openBlueprintOutline",
+        "title": "LoreDock: 打开大纲蓝图"
+      },
+      {
+        "command": "loredock.openBlueprintForOutline",
+        "title": "LoreDock: 打开此大纲蓝图"
+      },
+      {
+        "command": "loredock.openOutlineSource",
+        "title": "LoreDock: 打开大纲源文件"
+      },
+      {
         "command": "loredock.importOutlineToPlan",
-        "title": "LoreDock: 从大纲创建规划"
+        "title": "LoreDock: 导入独立大纲"
       },
       {
         "command": "loredock.rebuildReferenceIndex",
@@ -219,6 +250,26 @@
       {
         "command": "loredock.showReferenceIndex",
         "title": "LoreDock: 查看引用索引"
+      },
+      {
+        "command": "loredock.showProjectHealth",
+        "title": "LoreDock: 项目健康检查"
+      },
+      {
+        "command": "loredock.previewProjectHealthFixes",
+        "title": "LoreDock: 预览项目健康安全修复"
+      },
+      {
+        "command": "loredock.fixProjectHealth",
+        "title": "LoreDock: 执行项目健康安全修复"
+      },
+      {
+        "command": "loredock.saveProjectHealthBaseline",
+        "title": "LoreDock: 保存当前健康问题为基线"
+      },
+      {
+        "command": "loredock.clearProjectHealthBaseline",
+        "title": "LoreDock: 清空健康基线"
       },
       {
         "command": "loredock.exportCodexZip",
@@ -251,6 +302,10 @@
       {
         "command": "loredock.showStats",
         "title": "LoreDock: 显示写作统计"
+      },
+      {
+        "command": "loredock.showProjectDashboard",
+        "title": "LoreDock: 项目仪表盘"
       },
       {
         "command": "loredock.runLocalConsistencyCheck",
@@ -288,6 +343,21 @@
           "command": "loredock.refreshViews",
           "when": "view == loredock.codex",
           "group": "navigation@2"
+        },
+        {
+          "command": "loredock.openBlueprintOutline",
+          "when": "view == loredock.outlines",
+          "group": "navigation@1"
+        },
+        {
+          "command": "loredock.importOutlineToPlan",
+          "when": "view == loredock.outlines",
+          "group": "navigation@2"
+        },
+        {
+          "command": "loredock.refreshViews",
+          "when": "view == loredock.outlines",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
@@ -337,6 +407,16 @@
         "group": "3_check@1"
       },
         {
+          "command": "loredock.openBlueprintForOutline",
+          "when": "view == loredock.outlines && viewItem == loredock.outline",
+          "group": "inline@1"
+        },
+        {
+          "command": "loredock.openOutlineSource",
+          "when": "view == loredock.outlines && viewItem == loredock.outline",
+          "group": "2_open@1"
+        },
+        {
           "command": "loredock.openCodexEntry",
           "when": "view == loredock.codex && viewItem == loredock.codexEntry",
           "group": "inline@1"
@@ -374,16 +454,6 @@
         {
           "command": "loredock.showForeshadowingBoard",
           "when": "view == loredock.codex && viewItem == loredock.foreshadowing",
-          "group": "2_view@1"
-        },
-        {
-          "command": "loredock.createTimelineEvent",
-          "when": "view == loredock.codex && viewItem == loredock.timeline",
-          "group": "inline@1"
-        },
-        {
-          "command": "loredock.showTimelineBoard",
-          "when": "view == loredock.codex && viewItem == loredock.timeline",
           "group": "2_view@1"
         },
         {
@@ -519,6 +589,10 @@
           "when": "false"
         },
         {
+          "command": "loredock.openTimelineWorkbench",
+          "when": "false"
+        },
+        {
           "command": "loredock.showSceneBeatBoard",
           "when": "false"
         },
@@ -539,6 +613,18 @@
           "when": "false"
         },
         {
+          "command": "loredock.openBlueprintOutline",
+          "when": "false"
+        },
+        {
+          "command": "loredock.openBlueprintForOutline",
+          "when": "false"
+        },
+        {
+          "command": "loredock.openOutlineSource",
+          "when": "false"
+        },
+        {
           "command": "loredock.importOutlineToPlan",
           "when": "false"
         },
@@ -548,6 +634,22 @@
         },
         {
           "command": "loredock.showReferenceIndex",
+          "when": "false"
+        },
+        {
+          "command": "loredock.showProjectHealth",
+          "when": "false"
+        },
+        {
+          "command": "loredock.fixProjectHealth",
+          "when": "false"
+        },
+        {
+          "command": "loredock.saveProjectHealthBaseline",
+          "when": "false"
+        },
+        {
+          "command": "loredock.clearProjectHealthBaseline",
           "when": "false"
         },
         {
@@ -580,6 +682,14 @@
         },
         {
           "command": "loredock.showStats",
+          "when": "false"
+        },
+        {
+          "command": "loredock.showProjectDashboard",
+          "when": "false"
+        },
+        {
+          "command": "loredock.previewProjectHealthFixes",
           "when": "false"
         },
         {
