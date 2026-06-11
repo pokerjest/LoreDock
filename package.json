@@ -2,7 +2,7 @@
   "name": "loredock-vscode",
   "displayName": "LoreDock",
   "description": "Local-first AI writing workspace for long-form fiction.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publisher": "pokerjest",
   "license": "MIT",
   "repository": {
@@ -27,11 +27,25 @@
     "Other"
   ],
   "activationEvents": [
+    "workspaceContains:.loredock/project.json",
     "onView:loredock.manuscript",
     "onView:loredock.codex",
-    "onView:loredock.aiStatus",
     "onCommand:loredock.initProject",
     "onCommand:loredock.openSettings",
+    "onCommand:loredock.showAIModelPicker",
+    "onCommand:loredock.selectAIModel",
+    "onCommand:loredock.openCreativeAssistant",
+    "onCommand:loredock.openPlanView",
+    "onCommand:loredock.importOutlineToPlan",
+    "onCommand:loredock.rebuildReferenceIndex",
+    "onCommand:loredock.showReferenceIndex",
+    "onCommand:loredock.openPromptLibrary",
+    "onCommand:loredock.previewPromptTemplate",
+    "onCommand:loredock.showChatThreads",
+    "onCommand:loredock.saveSelectionAsSnippet",
+    "onCommand:loredock.exportCodexZip",
+    "onCommand:loredock.importCodexZip",
+    "onCommand:loredock.reviewPendingInferences",
     "onCommand:loredock.configureAI",
     "onCommand:loredock.diagnoseAIConfig",
     "onCommand:loredock.openStyleGuide",
@@ -49,7 +63,7 @@
     "watch": "tsc -watch -p ./",
     "test": "npm run compile && node --test \"out/test/unit/**/*.test.js\"",
     "test:integration": "npm run compile && node ./out/test/runTest.js",
-    "package:vsix": "vsce package --out loredock-vscode-0.1.1.vsix"
+    "package:vsix": "vsce package --out loredock-vscode-0.2.0.vsix"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",
@@ -77,10 +91,6 @@
         {
           "id": "loredock.codex",
           "name": "资料库"
-        },
-        {
-          "id": "loredock.aiStatus",
-          "name": "AI 状态"
         }
       ]
     },
@@ -214,6 +224,54 @@
         "title": "LoreDock: 应用摘要资料建议"
       },
       {
+        "command": "loredock.openCreativeAssistant",
+        "title": "LoreDock: 创作助手"
+      },
+      {
+        "command": "loredock.openPlanView",
+        "title": "LoreDock: 打开 Plan / Matrix"
+      },
+      {
+        "command": "loredock.importOutlineToPlan",
+        "title": "LoreDock: 从大纲创建规划"
+      },
+      {
+        "command": "loredock.rebuildReferenceIndex",
+        "title": "LoreDock: 重建引用索引"
+      },
+      {
+        "command": "loredock.showReferenceIndex",
+        "title": "LoreDock: 查看引用索引"
+      },
+      {
+        "command": "loredock.openPromptLibrary",
+        "title": "LoreDock: 打开 Prompt Library"
+      },
+      {
+        "command": "loredock.previewPromptTemplate",
+        "title": "LoreDock: 预览 Prompt"
+      },
+      {
+        "command": "loredock.showChatThreads",
+        "title": "LoreDock: 聊天线程"
+      },
+      {
+        "command": "loredock.saveSelectionAsSnippet",
+        "title": "LoreDock: 保存选区为 Snippet"
+      },
+      {
+        "command": "loredock.exportCodexZip",
+        "title": "LoreDock: 导出资料库 ZIP"
+      },
+      {
+        "command": "loredock.importCodexZip",
+        "title": "LoreDock: 导入资料库 ZIP"
+      },
+      {
+        "command": "loredock.reviewPendingInferences",
+        "title": "LoreDock: 处理 AI 推测"
+      },
+      {
         "command": "loredock.configureAI",
         "title": "LoreDock: 配置 AI"
       },
@@ -228,6 +286,10 @@
       {
         "command": "loredock.selectAIModel",
         "title": "LoreDock: 选择 AI 模型"
+      },
+      {
+        "command": "loredock.showAIModelPicker",
+        "title": "LoreDock: 显示 AI 模型选择"
       },
       {
         "command": "loredock.diagnoseAIConfig",
@@ -321,16 +383,6 @@
           "command": "loredock.refreshViews",
           "when": "view == loredock.codex",
           "group": "navigation@2"
-        },
-        {
-          "command": "loredock.openSettings",
-          "when": "view == loredock.aiStatus",
-          "group": "navigation@0"
-        },
-        {
-          "command": "loredock.refreshViews",
-          "when": "view == loredock.aiStatus",
-          "group": "navigation@1"
         }
       ],
       "view/item/context": [
@@ -615,6 +667,58 @@
         },
         {
           "command": "loredock.selectAIModel",
+          "when": "false"
+        },
+        {
+          "command": "loredock.showAIModelPicker",
+          "when": "false"
+        },
+        {
+          "command": "loredock.openCreativeAssistant",
+          "when": "false"
+        },
+        {
+          "command": "loredock.openPlanView",
+          "when": "false"
+        },
+        {
+          "command": "loredock.importOutlineToPlan",
+          "when": "false"
+        },
+        {
+          "command": "loredock.rebuildReferenceIndex",
+          "when": "false"
+        },
+        {
+          "command": "loredock.showReferenceIndex",
+          "when": "false"
+        },
+        {
+          "command": "loredock.openPromptLibrary",
+          "when": "false"
+        },
+        {
+          "command": "loredock.previewPromptTemplate",
+          "when": "false"
+        },
+        {
+          "command": "loredock.showChatThreads",
+          "when": "false"
+        },
+        {
+          "command": "loredock.saveSelectionAsSnippet",
+          "when": "false"
+        },
+        {
+          "command": "loredock.exportCodexZip",
+          "when": "false"
+        },
+        {
+          "command": "loredock.importCodexZip",
+          "when": "false"
+        },
+        {
+          "command": "loredock.reviewPendingInferences",
           "when": "false"
         },
         {

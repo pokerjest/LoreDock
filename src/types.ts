@@ -19,7 +19,7 @@ export type AIProvider =
   | 'deepseek'
   | 'custom';
 
-export type AITaskType = 'continue' | 'polish' | 'summary' | 'consistency' | 'test';
+export type AITaskType = 'continue' | 'polish' | 'summary' | 'consistency' | 'worldbuild' | 'extract' | 'test';
 
 export interface ProjectManifest {
   schemaVersion: 1;
@@ -63,7 +63,62 @@ export interface ProjectInitOptions {
 
 export interface CharacterRelationship {
   target: string;
+  type?: string;
+  status?: string;
   description: string;
+  reason?: string;
+  knownBy?: string[];
+  sourceRefs?: CodexSourceRef[];
+  hidden?: boolean;
+}
+
+export type CodexMemoryStatus = 'draft' | 'pending' | 'confirmed' | 'deprecated';
+export type InferenceStatus = 'pending' | 'accepted' | 'rejected';
+export type InferenceConfidence = 'low' | 'medium' | 'high';
+export type CodexSourceKind =
+  | 'character'
+  | 'location'
+  | 'world-rule'
+  | 'foreshadowing'
+  | 'timeline-event'
+  | 'scene'
+  | 'beat'
+  | 'project'
+  | 'style-guide'
+  | 'chapter'
+  | 'chapter-summary'
+  | 'conversation'
+  | 'manual';
+
+export interface CodexSourceRef {
+  kind: CodexSourceKind;
+  id?: string;
+  name?: string;
+  reason?: string;
+}
+
+export interface CodexInference {
+  subject: string;
+  field: string;
+  value: string;
+  basis: string[];
+  confidence: InferenceConfidence;
+  status: InferenceStatus;
+  sourceRefs: CodexSourceRef[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CodexProgression {
+  id: string;
+  title: string;
+  content: string;
+  effectiveFromChapterId?: string;
+  effectiveFromSceneId?: string;
+  sourceRefs: CodexSourceRef[];
+  status: 'pending' | 'confirmed' | 'deprecated';
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface BaseCodexCard {
@@ -74,6 +129,14 @@ export interface BaseCodexCard {
   aliases: string[];
   tags: string[];
   allowInContext: boolean;
+  alwaysIncludeInContext?: boolean;
+  doNotTrack?: boolean;
+  nestedRefs?: string[];
+  memoryStatus?: CodexMemoryStatus;
+  summary?: string;
+  sourceRefs?: CodexSourceRef[];
+  inferences?: CodexInference[];
+  progressions?: CodexProgression[];
   createdAt: string;
   updatedAt: string;
 }
@@ -88,6 +151,9 @@ export interface CharacterCard extends BaseCodexCard {
   abilities: string;
   weaknesses: string;
   relationships: CharacterRelationship[];
+  knows?: string[];
+  doesNotKnow?: string[];
+  relationshipNotes?: string;
   currentState: string;
   firstAppearanceChapterId?: string;
   secrets: string;
@@ -107,6 +173,7 @@ export interface LocationCard extends BaseCodexCard {
   currentState: string;
   secrets: string;
   hiddenSecrets: string;
+  relatedEvents?: string[];
 }
 
 export type WorldRuleImportance = 'normal' | 'important' | 'absolute';
@@ -114,7 +181,14 @@ export type WorldRuleImportance = 'normal' | 'important' | 'absolute';
 export interface WorldRule extends BaseCodexCard {
   kind: 'world-rule';
   importance: WorldRuleImportance;
+  category?: string;
   content: string;
+  rules?: string[];
+  scope?: string[];
+  relatedCharacters?: string[];
+  relatedLocations?: string[];
+  relatedFactions?: string[];
+  knownExceptions?: string[];
   hidden: boolean;
 }
 
@@ -135,10 +209,16 @@ export interface ForeshadowingCard extends BaseCodexCard {
 
 export interface TimelineEvent extends BaseCodexCard {
   kind: 'timeline-event';
+  sequence?: number;
   storyTime: string;
   chapterId?: string;
   location: string;
   participants: string[];
+  causes?: string[];
+  consequences?: string[];
+  knownBy?: string[];
+  unknownBy?: string[];
+  relationshipEffects?: CharacterRelationship[];
   result: string;
   visibility: 'reader-unknown' | 'character-unknown' | 'public';
 }
@@ -238,6 +318,7 @@ export interface ContextSection {
   body: string;
   priority: number;
   alwaysInclude?: boolean;
+  reason?: string;
 }
 
 export interface ContextPackage {
@@ -248,6 +329,63 @@ export interface ContextPackage {
   sections: ContextSection[];
   omitted: string[];
   assembledText: string;
+}
+
+export interface CodexReferenceOccurrence {
+  cardId: string;
+  cardName: string;
+  cardKind: CodexCard['kind'];
+  matchedText: string;
+  sourceKind: 'chapter' | 'summary' | 'scene' | 'beat' | 'chat' | 'snippet';
+  sourceId: string;
+  sourceTitle: string;
+  relativePath?: string;
+  excerpt: string;
+}
+
+export interface CodexReferenceIndex {
+  schemaVersion: 1;
+  generatedAt: string;
+  occurrences: CodexReferenceOccurrence[];
+}
+
+export interface ChatThread {
+  schemaVersion: 1;
+  id: string;
+  title: string;
+  pinned: boolean;
+  messages: AIMessage[];
+  draft?: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Snippet {
+  schemaVersion: 1;
+  id: string;
+  title: string;
+  content: string;
+  tags: string[];
+  sourceRefs: CodexSourceRef[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type PromptTemplateKind = 'continue' | 'polish' | 'summary' | 'consistency' | 'worldbuild' | 'extract' | 'beat' | 'chat';
+
+export interface PromptTemplate {
+  schemaVersion: 1;
+  id: string;
+  title: string;
+  kind: PromptTemplateKind;
+  description: string;
+  system: string;
+  user: string;
+  defaultModel?: string;
+  temperature?: number;
+  tags: string[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ExportStyle {

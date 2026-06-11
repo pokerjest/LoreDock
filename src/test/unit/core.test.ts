@@ -287,6 +287,124 @@ test('imports markdown manuscript into a new volume', async () => {
   assert.match(await fs.readFile(storage.resolve(imported[0].filePath), 'utf8'), /# 旧章一\n\n第一段。/);
 });
 
+test('imports DOCX manuscript text through the local parser', async () => {
+  const storage = await initializedStorage();
+  const first = (await storage.requireManifest()).volumes[0].chapters[0];
+  await fs.writeFile(storage.resolve(first.filePath), '# 第一章\n\n吴烬醒来。\n', 'utf8');
+  const exported = await storage.exportManuscript('docx');
+  const buffer = await fs.readFile(storage.resolve(exported));
+
+  const imported = await storage.importDocxManuscript('book.docx', buffer);
+
+  assert.ok(imported.length >= 1);
+  assert.match((await Promise.all(imported.map((chapter) => fs.readFile(storage.resolve(chapter.filePath), 'utf8')))).join('\n'), /吴烬醒来/);
+});
+
+test('builds reference index across manuscript, chat and snippets while respecting doNotTrack', async () => {
+  const storage = await initializedStorage();
+  const chapter = (await storage.requireManifest()).volumes[0].chapters[0];
+  await fs.writeFile(storage.resolve(chapter.filePath), '# 第一章\n\n吴烬在王都遇见灰烬这个旧称。\n', 'utf8');
+  const character = await storage.createCharacter({ name: '吴烬', detail: '主角' });
+  const characterEntry = await storage.findCodexEntryById(character.id);
+  assert.ok(characterEntry);
+  await storage.writeCodexEntry(characterEntry.relativePath, { ...character, aliases: ['灰烬'], memoryStatus: 'confirmed' });
+  const location = await storage.createLocation({ name: '王都' });
+  const locationEntry = await storage.findCodexEntryById(location.id);
+  assert.ok(locationEntry);
+  await storage.writeCodexEntry(locationEntry.relativePath, { ...location, doNotTrack: true });
+  await storage.saveChatThread({
+    schemaVersion: 1,
+    id: 'chat-reference',
+    title: '设定讨论',
+    pinned: false,
+    messages: [{ role: 'user', content: '灰烬这个别名会在第一卷频繁出现。' }],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  });
+  await storage.saveSnippet({
+    schemaVersion: 1,
+    id: 'snippet-reference',
+    title: '人物片段',
+    content: '吴烬总是避开钟楼。',
+    tags: [],
+    sourceRefs: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  });
+
+  const index = await storage.buildReferenceIndex();
+  const names = index.occurrences.map((occurrence) => occurrence.cardName);
+  const kinds = index.occurrences.filter((occurrence) => occurrence.cardName === '吴烬').map((occurrence) => occurrence.sourceKind);
+
+  assert.ok(names.includes('吴烬'));
+  assert.ok(kinds.includes('chapter'));
+  assert.ok(kinds.includes('chat'));
+  assert.ok(kinds.includes('snippet'));
+  assert.equal(names.includes('王都'), false);
+  assert.equal((await storage.readReferenceIndex())?.occurrences.length, index.occurrences.length);
+});
+
+test('applies confirmed progressions only after their effective chapter', async () => {
+  const storage = await initializedStorage();
+  const manifest = await storage.requireManifest();
+  const first = manifest.volumes[0].chapters[0];
+  const second = await storage.createChapter(manifest.volumes[0].id, '第二章');
+  await fs.writeFile(storage.resolve(first.filePath), '# 第一章\n\n吴烬研究灵能登记制度。\n', 'utf8');
+  await fs.writeFile(storage.resolve(second.filePath), '# 第二章\n\n吴烬回到王都，灵能登记制度开始变化。\n', 'utf8');
+  const rule = await storage.createWorldRule({ name: '灵能登记制度', detail: '三阶以上灵能者必须登记。' });
+  const entry = await storage.findCodexEntryById(rule.id);
+  assert.ok(entry);
+  await storage.writeCodexEntry(entry.relativePath, {
+    ...rule,
+    memoryStatus: 'confirmed',
+    progressions: [
+      {
+        id: 'progression-lockdown',
+        title: '王都戒严',
+        content: '第二章后，王都开始按街区封锁未登记灵能者。',
+        effectiveFromChapterId: second.id,
+        sourceRefs: [{ kind: 'chapter', id: second.id, name: '第二章' }],
+        status: 'confirmed',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      },
+      {
+        id: 'progression-pending',
+        title: '未确认改革',
+        content: '登记制度将在第三章废除。',
+        effectiveFromChapterId: first.id,
+        sourceRefs: [],
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }
+    ]
+  });
+
+  const firstContext = await buildContextPackage({ storage, chapterId: first.id, taskType: 'continue', userInstruction: '' });
+  const secondContext = await buildContextPackage({ storage, chapterId: second.id, taskType: 'continue', userInstruction: '' });
+
+  assert.doesNotMatch(firstContext.assembledText, /王都开始按街区封锁/);
+  assert.match(secondContext.assembledText, /王都开始按街区封锁/);
+  assert.doesNotMatch(secondContext.assembledText, /第三章废除/);
+});
+
+test('creates prompt library and round-trips codex zip exports', async () => {
+  const storage = await initializedStorage();
+  const prompts = await storage.ensurePromptLibrary();
+  await storage.createCharacter({ name: '吴烬', detail: '主角' });
+
+  const zipPath = await storage.exportCodexZip();
+  const zipBuffer = await fs.readFile(storage.resolve(zipPath));
+  const target = await initializedStorage();
+  const importedCount = await target.importCodexZip(zipBuffer);
+
+  assert.ok(prompts.some((prompt) => prompt.kind === 'continue'));
+  assert.equal((await storage.listPromptTemplates()).length, prompts.length);
+  assert.ok(importedCount >= 1);
+  assert.equal((await target.listCodexEntries('character')).some((entry) => entry.card.name === '吴烬'), true);
+});
+
 test('lists and clears AI history', async () => {
   const storage = await initializedStorage();
   await storage.appendHistory({
@@ -461,6 +579,94 @@ test('context includes foreshadowing without hidden truth by default', async () 
   assert.match(context.assembledText, /锁门声/);
   assert.match(context.assembledText, /门锁声会反复出现/);
   assert.doesNotMatch(context.assembledText, /幕后黑手/);
+});
+
+test('context includes structured world memory, relationships, timeline causality and pending inferences', async () => {
+  const storage = await initializedStorage();
+  const chapter = (await storage.requireManifest()).volumes[0].chapters[0];
+  await fs.writeFile(storage.resolve(chapter.filePath), '# 第一章\n\n林凛在王都调查灵能登记制度，吴烬提到旧钟塔爆炸。\n', 'utf8');
+
+  const character = await storage.createCharacter({ name: '林凛', detail: '调查者' });
+  const characterEntry = await storage.findCodexEntryById(character.id);
+  assert.ok(characterEntry);
+  await storage.writeCodexEntry(characterEntry.relativePath, {
+    ...character,
+    memoryStatus: 'confirmed',
+    relationships: [
+      {
+        target: '吴烬',
+        type: '盟友',
+        status: '不稳定',
+        description: '目标一致，但互相隐瞒关键情报。',
+        knownBy: ['林凛']
+      }
+    ],
+    knows: ['监察院隐藏过旧钟塔事故'],
+    doesNotKnow: ['吴烬真实身份'],
+    secrets: '她知道监察院密档编号。',
+    hiddenSecrets: '她本人曾被监察院实验过。',
+    inferences: [
+      {
+        subject: '林凛',
+        field: 'personality',
+        value: '她对官方机构保持戒备。',
+        basis: ['灵能登记制度要求三阶以上必须登记', '旧钟塔爆炸被监察院压下'],
+        confidence: 'high',
+        status: 'pending',
+        sourceRefs: [{ kind: 'world-rule', name: '灵能登记制度' }]
+      }
+    ]
+  });
+
+  const rule = await storage.createWorldRule({ name: '灵能登记制度', detail: '三阶以上灵能者必须登记。' });
+  const ruleEntry = await storage.findCodexEntryById(rule.id);
+  assert.ok(ruleEntry);
+  await storage.writeCodexEntry(ruleEntry.relativePath, {
+    ...rule,
+    memoryStatus: 'confirmed',
+    category: '力量体系 / 政治制度',
+    rules: ['三阶以上必须登记', '未登记灵能者不得进入王都'],
+    scope: ['王国'],
+    relatedCharacters: ['林凛'],
+    relatedFactions: ['王国监察院'],
+    importance: 'absolute'
+  });
+
+  const event = await storage.createTimelineEvent({ name: '旧钟塔爆炸' });
+  const eventEntry = await storage.findCodexEntryById(event.id);
+  assert.ok(eventEntry);
+  await storage.writeCodexEntry(eventEntry.relativePath, {
+    ...event,
+    memoryStatus: 'confirmed',
+    sequence: 12,
+    storyTime: '第一日夜',
+    location: '王都旧钟塔',
+    participants: ['林凛', '王国监察院'],
+    causes: ['监察院非法实验'],
+    consequences: ['王都加强登记制度'],
+    knownBy: ['林凛', '监察院高层'],
+    unknownBy: ['吴烬'],
+    result: '事故被压下，只留下公开谣言。',
+    visibility: 'character-unknown'
+  });
+
+  const context = await buildContextPackage({
+    storage,
+    chapterId: chapter.id,
+    taskType: 'continue',
+    userInstruction: '参考旧钟塔爆炸，但不要让吴烬知道真相。'
+  });
+
+  assert.match(context.assembledText, /力量体系 \/ 政治制度/);
+  assert.match(context.assembledText, /未登记灵能者不得进入王都/);
+  assert.match(context.assembledText, /林凛 -> 吴烬/);
+  assert.match(context.assembledText, /吴烬真实身份/);
+  assert.match(context.assembledText, /AI 推测层/);
+  assert.match(context.assembledText, /她对官方机构保持戒备/);
+  assert.match(context.assembledText, /原因：监察院非法实验/);
+  assert.match(context.assembledText, /不知情者：吴烬/);
+  assert.doesNotMatch(context.assembledText, /密档编号/);
+  assert.doesNotMatch(context.assembledText, /曾被监察院实验/);
 });
 
 test('runs deterministic consistency checks against codex facts', async () => {

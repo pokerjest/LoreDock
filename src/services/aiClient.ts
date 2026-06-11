@@ -17,7 +17,7 @@ interface ChatCompletionResponse {
   };
 }
 
-interface ModelInfo {
+export interface ModelInfo {
   id: string;
   label?: string;
 }

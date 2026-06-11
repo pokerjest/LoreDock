@@ -109,7 +109,15 @@ function commonFields(): Field[] {
     { key: 'name', label: '名称', type: 'text' },
     { key: 'aliases', label: '别名（逗号分隔）', type: 'array' },
     { key: 'tags', label: '标签（逗号分隔）', type: 'array' },
-    { key: 'allowInContext', label: '允许进入 AI 上下文', type: 'checkbox' }
+    { key: 'allowInContext', label: '允许进入 AI 上下文', type: 'checkbox' },
+    { key: 'alwaysIncludeInContext', label: '总是进入 AI 上下文', type: 'checkbox' },
+    { key: 'doNotTrack', label: '不要按名称/别名自动追踪', type: 'checkbox' },
+    { key: 'nestedRefs', label: '嵌套引用资料卡 ID/名称（逗号分隔）', type: 'array' },
+    { key: 'memoryStatus', label: '记忆状态', type: 'select', options: ['draft', 'pending', 'confirmed', 'deprecated'] },
+    { key: 'summary', label: '一句话摘要', type: 'textarea' },
+    { key: 'sourceRefs', label: '来源引用 JSON', type: 'json' },
+    { key: 'inferences', label: 'AI 推测 JSON', type: 'json' },
+    { key: 'progressions', label: 'Progressions/Additions JSON', type: 'json' }
   ];
 }
 
@@ -124,6 +132,9 @@ function fieldsForKind(kind: CodexCard['kind']): Field[] {
       { key: 'abilities', label: '能力', type: 'textarea' },
       { key: 'weaknesses', label: '弱点', type: 'textarea' },
       { key: 'relationships', label: '人物关系 JSON', type: 'json' },
+      { key: 'knows', label: '已知信息（逗号分隔）', type: 'array' },
+      { key: 'doesNotKnow', label: '未知/不可知信息（逗号分隔）', type: 'array' },
+      { key: 'relationshipNotes', label: '关系网备注', type: 'textarea' },
       { key: 'currentState', label: '当前状态', type: 'textarea' },
       { key: 'secrets', label: '普通秘密', type: 'textarea' },
       { key: 'hiddenSecrets', label: '隐藏秘密（普通续写默认不发送）', type: 'textarea' },
@@ -141,13 +152,21 @@ function fieldsForKind(kind: CodexCard['kind']): Field[] {
       { key: 'relatedCharacters', label: '相关人物（逗号分隔）', type: 'array' },
       { key: 'currentState', label: '当前状态', type: 'textarea' },
       { key: 'secrets', label: '普通秘密', type: 'textarea' },
-      { key: 'hiddenSecrets', label: '隐藏秘密', type: 'textarea' }
+      { key: 'hiddenSecrets', label: '隐藏秘密', type: 'textarea' },
+      { key: 'relatedEvents', label: '相关事件 ID/名称（逗号分隔）', type: 'array' }
     ];
   }
   if (kind === 'world-rule') {
     return [
       { key: 'importance', label: '重要性', type: 'select', options: ['normal', 'important', 'absolute'] },
+      { key: 'category', label: '类别', type: 'text' },
       { key: 'content', label: '规则内容', type: 'textarea' },
+      { key: 'rules', label: '规则条目（逗号分隔）', type: 'array' },
+      { key: 'scope', label: '适用范围（逗号分隔）', type: 'array' },
+      { key: 'relatedCharacters', label: '相关人物（逗号分隔）', type: 'array' },
+      { key: 'relatedLocations', label: '相关地点（逗号分隔）', type: 'array' },
+      { key: 'relatedFactions', label: '相关组织/国家（逗号分隔）', type: 'array' },
+      { key: 'knownExceptions', label: '已知例外（逗号分隔）', type: 'array' },
       { key: 'hidden', label: '隐藏规则', type: 'checkbox' }
     ];
   }
@@ -166,10 +185,16 @@ function fieldsForKind(kind: CodexCard['kind']): Field[] {
   }
   if (kind === 'timeline-event') {
     return [
+      { key: 'sequence', label: '事件顺序', type: 'text' },
       { key: 'storyTime', label: '故事时间', type: 'text' },
       { key: 'chapterId', label: '关联章节 ID', type: 'text' },
       { key: 'location', label: '地点', type: 'text' },
       { key: 'participants', label: '参与人物（逗号分隔）', type: 'array' },
+      { key: 'causes', label: '原因事件 ID/名称（逗号分隔）', type: 'array' },
+      { key: 'consequences', label: '后果事件 ID/名称（逗号分隔）', type: 'array' },
+      { key: 'knownBy', label: '知情者（逗号分隔）', type: 'array' },
+      { key: 'unknownBy', label: '不知情者（逗号分隔）', type: 'array' },
+      { key: 'relationshipEffects', label: '关系影响 JSON', type: 'json' },
       { key: 'result', label: '结果', type: 'textarea' },
       { key: 'visibility', label: '可见性', type: 'select', options: ['reader-unknown', 'character-unknown', 'public'] }
     ];
@@ -213,7 +238,7 @@ function renderField(field: Field, card: CodexCard): string {
   if (field.type === 'json') {
     return `<label>${escapeHtml(field.label)}</label><textarea data-key="${field.key}" data-type="json">${escapeHtml(JSON.stringify(value ?? [], null, 2))}</textarea>`;
   }
-  return `<label>${escapeHtml(field.label)}</label><input data-key="${field.key}" data-type="${field.key === 'order' ? 'number' : 'text'}" value="${escapeHtml(String(value ?? ''))}">`;
+  return `<label>${escapeHtml(field.label)}</label><input data-key="${field.key}" data-type="${field.key === 'order' || field.key === 'sequence' ? 'number' : 'text'}" value="${escapeHtml(String(value ?? ''))}">`;
 }
 
 function kindLabel(kind: CodexCard['kind']): string {

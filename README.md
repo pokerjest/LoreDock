@@ -7,6 +7,8 @@ LoreDock 是一个本地优先的 VS Code 长篇小说 AI 写作工作台。它�
 - 一键初始化小说项目，创建 `.loredock/`、`manuscript/`、`codex/` 本地结构。
 - 在 Activity Bar 的 LoreDock 面板里浏览卷、章节、人物、地点和世界规则。
 - 一键创建卷、章节、人物卡、地点卡和世界规则草稿；标题和设定可以之后再补。
+- 支持创作助手：左侧和 AI 聊小说方向，右侧自动沉淀标题、文风、人物、地点、世界规则和章节/场景规划草稿，确认后写入项目。
+- 支持世界观记忆 v0.2：资料卡可记录记忆状态、来源引用、AI 推测、人物关系、知情状态、事件因果和时间线影响，帮助 AI 读取大型世界观时保留推理依据。
 - 支持删除书籍项目、卷、章节和资料卡，删除前会明确确认。
 - 使用 VS Code 原生编辑器打开章节 Markdown 和资料卡 JSON。
 - 支持章节状态切换和写作统计面板。
@@ -19,13 +21,14 @@ LoreDock 是一个本地优先的 VS Code 长篇小说 AI 写作工作台。它�
 - 支持将整本书按卷章顺序导出为 Markdown、TXT、DOCX、EPUB 或 PDF，并可通过导出样式文件控制标题、作者、卷标题、字号和行距等。
 - 通过 `.loredock/ai.local.jsonc` 配置供应商/模型，通过 `.loredock/ai.env` 填写本地 API key，支持 GPT/OpenAI、Claude、Gemini 和 OpenAI-compatible 服务。
 - LoreDock 侧边栏提供齿轮设置页，可以像插件设置一样直接编辑 AI provider、baseUrl、模型、温度、超时和各平台 API key。
-- 侧边栏最下面的 `AI 状态` 会显示当前正在使用的模型；点击模型名即可拉取模型列表并切换。
+- VS Code 底部状态栏会显示当前正在使用的模型；点击模型名即可拉取模型列表并切换。
 - 填好 key 后可以读取当前供应商可用模型列表，并选择模型写回配置文件。
 - 执行章节续写、选区润色、章节摘要生成和一致性检查。
 - 每次 AI 调用前预览即将发送的上下文，并可手动排除非必需段落；AI 结果必须确认后才会追加、插入、替换或保存。润色支持 VS Code Diff 和分段接受/保留。
 - 本地记录 AI 操作历史，并提供历史查看/复制/清空面板。
 - 章节摘要保存后，会从人物变化、地点变化、新设定、伏笔和未解决问题生成待确认资料库更新建议，并支持逐条接受/跳过后写回资料库。
 - 支持本地确定性一致性检查，先抓隐藏真相提前出现、人物状态复核、绝对规则疑似违反和时间线多地点冲突等问题。
+- 一致性上下文会明确区分已确认正史和 AI 推测层；pending 推测会标注依据和置信度，普通续写仍默认排除 `secrets` / `hiddenSecrets`。
 
 ## 本地项目结构
 
@@ -72,7 +75,22 @@ npm run test:integration
 - 手稿栏顶部“更多操作”只保留项目级动作，例如统计、目标、文风、导入导出、AI 历史、摘要建议和本地检查。
 - 资料库栏顶部“更多操作”只保留打开资料卡、表单编辑、筛选和刷新。
 
-初始化不会强迫你先起书名、填作者或创建角色。LoreDock 会用当前 workspace 名称作为临时标题，创建第一卷和第一章；之后可以直接开始写，或在 `.loredock/project.json`、`.loredock/style-guide.md` 和 `codex/` 里的 JSON 卡片中慢慢补设定。
+初始化不会强迫你先起书名、填作者或创建角色。LoreDock 会用当前 workspace 名称作为临时标题，创建第一卷和第一章；之后可以直接开始写，也可以在手稿栏“更多操作”里打开“创作助手”。
+
+创作助手是一个左右分栏页面：左边是 Workshop Chat，可以用 Enter 发送、Shift+Enter 换行，也可以点快捷提示让 AI 从零构建、深化主角、提取资料库或生成第一卷规划；右边是 Codex Memory，显示 AI 从聊天里整理出的设定草稿、参考设定、AI 推测、潜在矛盾、待确认问题和计数。草稿不会自动写入文件；点击“应用项目”“应用文风”“应用资料库/记忆”“应用规划”或“应用全部”后，才会分别写入 `.loredock/project.json`、`.loredock/style-guide.md` 和 `codex/` 资料卡。已有同名人物、地点、世界规则、时间线事件、场景和 Beat 会被更新，找不到才会新建。AI 推测会写入对应资料卡的 `inferences`，默认状态是 `pending`，不会直接覆盖正史字段。
+
+## 世界观记忆模型
+
+LoreDock 现在把大型世界观拆成可维护的本地记忆层：
+
+- `memoryStatus`：标记资料卡是 `draft`、`confirmed` 还是 `deprecated`。
+- `sourceRefs`：记录设定来自聊天、章节摘要、手动编辑或其他资料卡。
+- `inferences`：保存 AI 推测，包括对象、字段、推测内容、依据、置信度和状态；`pending` 表示只供参考，`accepted` 才代表作者认可。
+- 人物卡支持 `relationships`、`knows`、`doesNotKnow`，用于维护人物关系和“谁知道什么”。
+- 世界规则支持 `category`、`rules`、`scope`、相关人物/地点/组织、已知例外，适合力量体系、政治体系、宗教制度等大型设定。
+- 时间线事件支持 `sequence`、`causes`、`consequences`、`knownBy`、`unknownBy` 和关系影响，用来维护事件因果和信息公开状态。
+
+AI 续写、润色、摘要和一致性检查前会构建上下文包，只选择与当前章节、选区或用户要求相关的记忆。上下文中会标明“AI 推测层（不是正史）”，并继续排除人物/地点的 `secrets` 和 `hiddenSecrets`。
 
 添加和删除主要从 LoreDock 侧边栏完成。为了避免重复入口，能从右键或底部状态区完成的动作不再塞进顶部“更多操作”：
 
@@ -102,7 +120,7 @@ npm run test:integration
 - `API Key`：`OPENROUTER_API_KEY`、`ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`GEMINI_API_KEY`、`DEEPSEEK_API_KEY`。
 - `诊断`：AI 请求预检、测试 AI 连接。
 
-设置页底部会显示当前模型，点击模型名或“选择模型”可以拉取当前 provider 的模型列表并切换。侧边栏最下面的 `AI 状态` 也会显示当前模型，点击同样可以切换。
+VS Code 底部状态栏会显示当前模型。点击底部模型名，会使用 VS Code 原生弹出列表读取当前 provider 的模型并切换。
 
 如果需要直接编辑文件，设置页里也有“打开配置文件”，会同时打开两个文件：
 
@@ -117,7 +135,7 @@ npm run test:integration
 - `openai-compatible`：通用 `/chat/completions` 兼容接口
 - `openrouter`、`lm-studio`、`ollama`、`deepseek`、`custom`
 
-把 `activeProvider` 改成要使用的供应商，然后在对应配置块里填写 `baseUrl`。把 key 写进 `.loredock/ai.env` 并保存后，运行 `LoreDock: 选择 AI 模型`，插件会调用当前供应商的模型列表接口，让你选择一个模型并写回 `model` 字段。
+把 `activeProvider` 改成要使用的供应商，然后在对应配置块里填写 `baseUrl`。把 key 写进 `.loredock/ai.env` 并保存后，点击底部状态栏里的当前模型，插件会调用当前供应商的模型列表接口，让你选择一个模型并写回 `model` 字段。
 
 如果认证异常，先在 `LoreDock Settings` 的 `诊断` 里运行 `AI 请求预检`。OpenRouter 模式下它会用同样的认证头请求 `https://openrouter.ai/api/v1/key`，不发送小说正文；报告会显示实际 URL、认证方式、key 掩码长度、HTTP 状态和服务端响应。
 

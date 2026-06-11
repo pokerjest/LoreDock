@@ -1,10 +1,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import {
   AI_CONFIG_FILE,
   AI_ENV_FILE,
   BEATS_DIR,
   CHARACTERS_DIR,
+  CHAT_DIR,
   CODEX_DIR,
   EXPORTS_DIR,
   EXPORT_STYLE_FILE,
@@ -15,8 +17,11 @@ import {
   LOCATIONS_DIR,
   MANUSCRIPT_DIR,
   PENDING_UPDATES_DIR,
+  PROMPTS_DIR,
   PROJECT_FILE,
+  REFERENCE_INDEX_FILE,
   SCENES_DIR,
+  SNIPPETS_DIR,
   STYLE_GUIDE_FILE,
   SUMMARY_DIR,
   TIMELINE_DIR,
@@ -32,8 +37,11 @@ import {
   ChapterStatus,
   ChapterSummary,
   CharacterCard,
+  ChatThread,
   CodexCard,
   CodexEntry,
+  CodexReferenceIndex,
+  CodexReferenceOccurrence,
   ConsistencyIssue,
   CreateCodexInput,
   BeatPlan,
@@ -42,7 +50,9 @@ import {
   LocationCard,
   ProjectInitOptions,
   ProjectManifest,
+  PromptTemplate,
   ScenePlan,
+  Snippet,
   TimelineEvent,
   VolumeMeta,
   WorldRule,
@@ -492,6 +502,11 @@ export class LoreDockStorage {
     return STYLE_GUIDE_FILE;
   }
 
+  public async writeStyleGuide(content: string): Promise<void> {
+    await this.requireManifest();
+    await fs.writeFile(this.resolve(await this.ensureStyleGuideFile()), content.endsWith('\n') ? content : `${content}\n`, 'utf8');
+  }
+
   public async exportManuscript(format: ExportFormat): Promise<string> {
     const manifest = await this.refreshChapterStats();
     if (!manifest) {
@@ -599,6 +614,14 @@ export class LoreDockStorage {
       aliases: [],
       tags: [],
       allowInContext: true,
+      alwaysIncludeInContext: false,
+      doNotTrack: false,
+      nestedRefs: [],
+      memoryStatus: 'draft',
+      summary: '',
+      sourceRefs: [],
+      inferences: [],
+      progressions: [],
       identity: input.detail ?? '',
       fixedSetting: '',
       personality: '',
@@ -607,6 +630,9 @@ export class LoreDockStorage {
       abilities: '',
       weaknesses: '',
       relationships: [],
+      knows: [],
+      doesNotKnow: [],
+      relationshipNotes: '',
       currentState: '',
       secrets: '',
       hiddenSecrets: '',
@@ -628,6 +654,14 @@ export class LoreDockStorage {
       aliases: [],
       tags: [],
       allowInContext: true,
+      alwaysIncludeInContext: false,
+      doNotTrack: false,
+      nestedRefs: [],
+      memoryStatus: 'draft',
+      summary: '',
+      sourceRefs: [],
+      inferences: [],
+      progressions: [],
       type: input.detail ?? '',
       region: '',
       visualFeatures: '',
@@ -638,6 +672,7 @@ export class LoreDockStorage {
       currentState: '',
       secrets: '',
       hiddenSecrets: '',
+      relatedEvents: [],
       createdAt: timestamp,
       updatedAt: timestamp
     };
@@ -655,8 +690,23 @@ export class LoreDockStorage {
       aliases: [],
       tags: [],
       allowInContext: true,
+      alwaysIncludeInContext: false,
+      doNotTrack: false,
+      nestedRefs: [],
+      memoryStatus: 'draft',
+      summary: '',
+      sourceRefs: [],
+      inferences: [],
+      progressions: [],
       importance: 'important',
+      category: '',
       content: input.detail ?? '',
+      rules: [],
+      scope: [],
+      relatedCharacters: [],
+      relatedLocations: [],
+      relatedFactions: [],
+      knownExceptions: [],
       hidden: false,
       createdAt: timestamp,
       updatedAt: timestamp
@@ -675,6 +725,14 @@ export class LoreDockStorage {
       aliases: [],
       tags: [],
       allowInContext: true,
+      alwaysIncludeInContext: false,
+      doNotTrack: false,
+      nestedRefs: [],
+      memoryStatus: 'draft',
+      summary: '',
+      sourceRefs: [],
+      inferences: [],
+      progressions: [],
       status: 'planned',
       description: input.detail ?? '',
       firstSeedChapterId: input.chapterId,
@@ -701,10 +759,24 @@ export class LoreDockStorage {
       aliases: [],
       tags: [],
       allowInContext: true,
+      alwaysIncludeInContext: false,
+      doNotTrack: false,
+      nestedRefs: [],
+      memoryStatus: 'draft',
+      summary: '',
+      sourceRefs: [],
+      inferences: [],
+      progressions: [],
+      sequence: (await this.listCodexEntries('timeline-event')).length + 1,
       storyTime: '',
       chapterId: input.chapterId,
       location: '',
       participants: [],
+      causes: [],
+      consequences: [],
+      knownBy: [],
+      unknownBy: [],
+      relationshipEffects: [],
       result: input.detail ?? '',
       visibility: 'public',
       createdAt: timestamp,
@@ -725,6 +797,14 @@ export class LoreDockStorage {
       aliases: [],
       tags: [],
       allowInContext: true,
+      alwaysIncludeInContext: false,
+      doNotTrack: false,
+      nestedRefs: [],
+      memoryStatus: 'draft',
+      summary: '',
+      sourceRefs: [],
+      inferences: [],
+      progressions: [],
       chapterId: input.chapterId,
       viewpointCharacter: '',
       location: '',
@@ -750,6 +830,14 @@ export class LoreDockStorage {
       aliases: [],
       tags: [],
       allowInContext: true,
+      alwaysIncludeInContext: false,
+      doNotTrack: false,
+      nestedRefs: [],
+      memoryStatus: 'draft',
+      summary: '',
+      sourceRefs: [],
+      inferences: [],
+      progressions: [],
       chapterId: input.chapterId,
       sceneId: '',
       content: input.detail ?? '',
@@ -919,6 +1007,249 @@ export class LoreDockStorage {
     }
   }
 
+  public async buildReferenceIndex(): Promise<CodexReferenceIndex> {
+    await this.requireManifest();
+    const [manifest, entries, summaries, chats, snippets] = await Promise.all([
+      this.requireManifest(),
+      this.listCodexEntries(),
+      this.listSummaries(),
+      this.listChatThreads(),
+      this.listSnippets()
+    ]);
+    const trackable = entries
+      .filter((entry) => entry.card.allowInContext !== false && !entry.card.doNotTrack)
+      .map((entry) => ({
+        entry,
+        names: [entry.card.name, ...entry.card.aliases].map((name) => name.trim()).filter((name) => name.length >= 2)
+      }))
+      .filter((item) => item.names.length > 0);
+
+    const sources: Array<{
+      kind: CodexReferenceOccurrence['sourceKind'];
+      id: string;
+      title: string;
+      relativePath?: string;
+      text: string;
+    }> = [];
+
+    for (const volume of manifest.volumes) {
+      for (const chapter of volume.chapters) {
+        if (await this.exists(chapter.filePath)) {
+          sources.push({
+            kind: 'chapter',
+            id: chapter.id,
+            title: `${volume.title} / ${chapter.title}`,
+            relativePath: chapter.filePath,
+            text: await fs.readFile(this.resolve(chapter.filePath), 'utf8')
+          });
+        }
+      }
+    }
+    for (const summary of summaries) {
+      sources.push({
+        kind: 'summary',
+        id: summary.id,
+        title: summary.chapterTitle,
+        relativePath: posixPath(SUMMARY_DIR, `${summary.id}.json`),
+        text: [
+          summary.oneLineSummary,
+          ...summary.majorEvents,
+          ...summary.characterChanges,
+          ...summary.locationChanges,
+          ...summary.newSettings,
+          ...summary.facts,
+          ...summary.inferences
+        ].join('\n')
+      });
+    }
+    for (const scene of await this.listCodexEntries('scene')) {
+      const card = scene.card as ScenePlan;
+      sources.push({
+        kind: 'scene',
+        id: card.id,
+        title: card.name,
+        relativePath: scene.relativePath,
+        text: [card.name, card.summary, card.viewpointCharacter, card.location, card.conflict, card.turn, card.outcome].filter(Boolean).join('\n')
+      });
+    }
+    for (const beat of await this.listCodexEntries('beat')) {
+      const card = beat.card as BeatPlan;
+      sources.push({
+        kind: 'beat',
+        id: card.id,
+        title: card.name,
+        relativePath: beat.relativePath,
+        text: [card.name, card.summary, card.content, card.purpose].filter(Boolean).join('\n')
+      });
+    }
+    for (const chat of chats) {
+      sources.push({
+        kind: 'chat',
+        id: chat.id,
+        title: chat.title,
+        relativePath: posixPath(CHAT_DIR, `${chat.id}.json`),
+        text: chat.messages.map((message) => message.content).join('\n')
+      });
+    }
+    for (const snippet of snippets) {
+      sources.push({
+        kind: 'snippet',
+        id: snippet.id,
+        title: snippet.title,
+        relativePath: posixPath(SNIPPETS_DIR, `${snippet.id}.json`),
+        text: snippet.content
+      });
+    }
+
+    const occurrences: CodexReferenceOccurrence[] = [];
+    for (const source of sources) {
+      for (const { entry, names } of trackable) {
+        for (const name of names) {
+          for (const index of findAllOccurrences(source.text, name)) {
+            occurrences.push({
+              cardId: entry.card.id,
+              cardName: entry.card.name,
+              cardKind: entry.card.kind,
+              matchedText: name,
+              sourceKind: source.kind,
+              sourceId: source.id,
+              sourceTitle: source.title,
+              relativePath: source.relativePath,
+              excerpt: excerptAround(source.text, index, name.length)
+            });
+          }
+        }
+      }
+    }
+
+    const index: CodexReferenceIndex = {
+      schemaVersion: 1,
+      generatedAt: nowIso(),
+      occurrences
+    };
+    await this.writeJson(REFERENCE_INDEX_FILE, index);
+    return index;
+  }
+
+  public async readReferenceIndex(): Promise<CodexReferenceIndex | undefined> {
+    if (!(await this.exists(REFERENCE_INDEX_FILE))) {
+      return undefined;
+    }
+    return this.readJson<CodexReferenceIndex>(REFERENCE_INDEX_FILE);
+  }
+
+  public async setCodexMemoryStatus(cardId: string, status: CodexCard['memoryStatus']): Promise<CodexEntry> {
+    const entry = await this.findCodexEntryById(cardId);
+    if (!entry) {
+      throw new Error(`找不到资料卡：${cardId}`);
+    }
+    return this.writeCodexEntry(entry.relativePath, { ...entry.card, memoryStatus: status });
+  }
+
+  public async listChatThreads(): Promise<ChatThread[]> {
+    return this.listJsonDirectory<ChatThread>(CHAT_DIR, (left, right) => Number(right.pinned) - Number(left.pinned) || right.updatedAt.localeCompare(left.updatedAt));
+  }
+
+  public async saveChatThread(thread: ChatThread): Promise<ChatThread> {
+    await this.requireManifest();
+    const timestamp = nowIso();
+    const normalized: ChatThread = {
+      ...thread,
+      schemaVersion: 1,
+      updatedAt: timestamp,
+      createdAt: thread.createdAt || timestamp
+    };
+    await this.writeJson(posixPath(CHAT_DIR, `${normalized.id}.json`), normalized);
+    return normalized;
+  }
+
+  public async deleteChatThread(threadId: string): Promise<void> {
+    await fs.rm(this.resolve(posixPath(CHAT_DIR, `${threadId}.json`)), { force: true });
+  }
+
+  public async exportChatThreadMarkdown(threadId: string): Promise<string> {
+    const thread = (await this.listChatThreads()).find((candidate) => candidate.id === threadId);
+    if (!thread) {
+      throw new Error(`找不到聊天线程：${threadId}`);
+    }
+    await fs.mkdir(this.resolve(EXPORTS_DIR), { recursive: true });
+    const relativePath = posixPath(EXPORTS_DIR, `${slugify(thread.title)}-${thread.id}.md`);
+    const body = [`# ${thread.title}`, '', ...thread.messages.flatMap((message) => [`## ${message.role}`, '', message.content, ''])].join('\n');
+    await fs.writeFile(this.resolve(relativePath), body.trimEnd() + '\n', 'utf8');
+    return relativePath;
+  }
+
+  public async listSnippets(): Promise<Snippet[]> {
+    return this.listJsonDirectory<Snippet>(SNIPPETS_DIR, (left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
+
+  public async saveSnippet(snippet: Snippet): Promise<Snippet> {
+    await this.requireManifest();
+    const timestamp = nowIso();
+    const normalized: Snippet = {
+      ...snippet,
+      schemaVersion: 1,
+      updatedAt: timestamp,
+      createdAt: snippet.createdAt || timestamp
+    };
+    await this.writeJson(posixPath(SNIPPETS_DIR, `${normalized.id}.json`), normalized);
+    return normalized;
+  }
+
+  public async ensurePromptLibrary(): Promise<PromptTemplate[]> {
+    await this.requireManifest();
+    await fs.mkdir(this.resolve(PROMPTS_DIR), { recursive: true });
+    const existing = await this.listPromptTemplates();
+    if (existing.length > 0) {
+      return existing;
+    }
+    const timestamp = nowIso();
+    const defaults = defaultPromptTemplates(timestamp);
+    for (const prompt of defaults) {
+      await this.writeJson(posixPath(PROMPTS_DIR, `${prompt.id}.json`), prompt);
+    }
+    return defaults;
+  }
+
+  public async listPromptTemplates(): Promise<PromptTemplate[]> {
+    return this.listJsonDirectory<PromptTemplate>(PROMPTS_DIR, (left, right) => left.kind.localeCompare(right.kind) || left.title.localeCompare(right.title, 'zh-Hans-CN'));
+  }
+
+  public async exportCodexZip(): Promise<string> {
+    await this.requireManifest();
+    const entries = await this.listCodexEntries();
+    await fs.mkdir(this.resolve(EXPORTS_DIR), { recursive: true });
+    const relativePath = posixPath(EXPORTS_DIR, `codex-${new Date().toISOString().slice(0, 10)}.zip`);
+    const files = await Promise.all(entries.map(async (entry) => ({
+      name: entry.relativePath,
+      data: await fs.readFile(this.resolve(entry.relativePath))
+    })));
+    await fs.writeFile(this.resolve(relativePath), zipFiles(files));
+    return relativePath;
+  }
+
+  public async importCodexZip(buffer: Buffer): Promise<number> {
+    await this.requireManifest();
+    const files = unzipFiles(buffer);
+    let imported = 0;
+    for (const file of files) {
+      const normalized = toWorkspaceRelativePath(file.name);
+      if (!normalized.startsWith(`${CODEX_DIR}/`) || !normalized.endsWith('.json')) {
+        continue;
+      }
+      JSON.parse(stripUtf8Bom(file.data.toString('utf8')));
+      await fs.mkdir(path.dirname(this.resolve(normalized)), { recursive: true });
+      await fs.writeFile(this.resolve(normalized), file.data);
+      imported += 1;
+    }
+    return imported;
+  }
+
+  public async importDocxManuscript(sourceName: string, buffer: Buffer): Promise<ChapterMeta[]> {
+    const text = extractDocxText(buffer);
+    return this.importManuscript(sourceName, text);
+  }
+
   public async runDeterministicConsistencyCheck(chapterId: string): Promise<ConsistencyIssue[]> {
     const chapterText = await this.readChapterText(chapterId);
     const cards = await this.listCodexCards();
@@ -951,6 +1282,22 @@ export class LoreDockStorage {
           source: `world-rule:${card.id}`,
           suggestion: '检查是否需要补充代价、限制或改写为不违反规则的版本。'
         });
+      }
+      if (card.kind === 'timeline-event' && card.unknownBy?.length) {
+        const eventSignals = [card.name, card.result, ...(card.consequences ?? [])]
+          .map((value) => value.trim())
+          .filter((value) => value.length >= 4);
+        for (const character of card.unknownBy) {
+          if (chapterText.includes(character) && eventSignals.some((signal) => chapterText.includes(signal))) {
+            issues.push({
+              severity: '中等问题',
+              title: `${character} 可能知道了不该知道的事件“${card.name}”`,
+              detail: `时间线事件把 ${character} 标为不知情者，但正文同时出现该人物和事件线索。`,
+              source: `timeline-event:${card.id}`,
+              suggestion: '确认这是误会、公开情报、旁白信息，还是需要调整知情状态或正文表述。'
+            });
+          }
+        }
       }
     }
 
@@ -1054,9 +1401,12 @@ export class LoreDockStorage {
       [
         '.loredock',
         SUMMARY_DIR,
-        HISTORY_DIR,
-        PENDING_UPDATES_DIR,
-        MANUSCRIPT_DIR,
+      HISTORY_DIR,
+      PENDING_UPDATES_DIR,
+      CHAT_DIR,
+      SNIPPETS_DIR,
+      PROMPTS_DIR,
+      MANUSCRIPT_DIR,
         CODEX_DIR,
         CHARACTERS_DIR,
         LOCATIONS_DIR,
@@ -1101,6 +1451,14 @@ export class LoreDockStorage {
         aliases: [],
         tags: ['示例'],
         allowInContext: true,
+        alwaysIncludeInContext: false,
+        doNotTrack: false,
+        nestedRefs: [],
+        memoryStatus: 'draft',
+        summary: '',
+        sourceRefs: [],
+        inferences: [],
+        progressions: [],
         identity: '主角或重要角色',
         fixedSetting: '在这里记录不可随意改变的固定设定。',
         personality: '在这里记录性格基调。',
@@ -1109,6 +1467,9 @@ export class LoreDockStorage {
         abilities: '',
         weaknesses: '',
         relationships: [],
+        knows: [],
+        doesNotKnow: [],
+        relationshipNotes: '',
         currentState: '在这里记录最新状态。',
         secrets: '普通续写默认不会发送此字段。',
         hiddenSecrets: '普通续写默认不会发送此字段。',
@@ -1138,6 +1499,27 @@ export class LoreDockStorage {
           }))
       );
       return cards.sort((a, b) => a.card.name.localeCompare(b.card.name, 'zh-Hans-CN'));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  private async listJsonDirectory<T extends { updatedAt?: string }>(
+    relativeDirectory: string,
+    sorter: (left: T, right: T) => number
+  ): Promise<T[]> {
+    const absolute = this.resolve(relativeDirectory);
+    try {
+      const entries = await fs.readdir(absolute, { withFileTypes: true });
+      const values = await Promise.all(
+        entries
+          .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+          .map((entry) => this.readJson<T>(posixPath(relativeDirectory, entry.name)))
+      );
+      return values.sort(sorter);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return [];
@@ -1775,6 +2157,135 @@ function crc32(buffer: Buffer): number {
 
 function escapeXml(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function unzipFiles(buffer: Buffer): Array<{ name: string; data: Buffer }> {
+  const files: Array<{ name: string; data: Buffer }> = [];
+  let offset = 0;
+  while (offset + 30 <= buffer.length) {
+    const signature = buffer.readUInt32LE(offset);
+    if (signature !== 0x04034b50) {
+      break;
+    }
+    const method = buffer.readUInt16LE(offset + 8);
+    const compressedSize = buffer.readUInt32LE(offset + 18);
+    const fileNameLength = buffer.readUInt16LE(offset + 26);
+    const extraLength = buffer.readUInt16LE(offset + 28);
+    const nameStart = offset + 30;
+    const dataStart = nameStart + fileNameLength + extraLength;
+    const dataEnd = dataStart + compressedSize;
+    if (dataEnd > buffer.length) {
+      break;
+    }
+    const name = buffer.subarray(nameStart, nameStart + fileNameLength).toString('utf8');
+    const compressed = buffer.subarray(dataStart, dataEnd);
+    const data = method === 0 ? compressed : method === 8 ? zlib.inflateRawSync(compressed) : Buffer.alloc(0);
+    if (data.length > 0 || method === 0) {
+      files.push({ name, data });
+    }
+    offset = dataEnd;
+  }
+  return files;
+}
+
+function extractDocxText(buffer: Buffer): string {
+  const document = unzipFiles(buffer).find((file) => file.name === 'word/document.xml');
+  if (!document) {
+    throw new Error('DOCX 中没有找到 word/document.xml。');
+  }
+  const xml = document.data.toString('utf8');
+  const paragraphs = [...xml.matchAll(/<w:p[\s\S]*?<\/w:p>/g)].map((match) => match[0]);
+  const lines: string[] = [];
+  for (const paragraph of paragraphs) {
+    const style = paragraph.match(/<w:pStyle[^>]+w:val="([^"]+)"/)?.[1] ?? '';
+    const text = [...paragraph.matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g)]
+      .map((match) => unescapeXml(match[1]))
+      .join('');
+    if (!text.trim()) {
+      continue;
+    }
+    if (/heading1|title/i.test(style)) {
+      lines.push(`# ${text.trim()}`);
+    } else if (/heading2/i.test(style)) {
+      lines.push(`## ${text.trim()}`);
+    } else {
+      lines.push(text.trim());
+    }
+  }
+  return `${lines.join('\n\n').trim()}\n`;
+}
+
+function unescapeXml(value: string): string {
+  return value
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+function findAllOccurrences(text: string, needle: string): number[] {
+  const indexes: number[] = [];
+  if (!needle.trim()) {
+    return indexes;
+  }
+  let offset = 0;
+  while (offset < text.length) {
+    const index = text.indexOf(needle, offset);
+    if (index === -1) {
+      break;
+    }
+    indexes.push(index);
+    offset = index + needle.length;
+  }
+  return indexes;
+}
+
+function excerptAround(text: string, index: number, length: number): string {
+  const start = Math.max(0, index - 42);
+  const end = Math.min(text.length, index + length + 42);
+  return text.slice(start, end).replace(/\s+/g, ' ').trim();
+}
+
+function defaultPromptTemplates(timestamp: string): PromptTemplate[] {
+  return [
+    {
+      schemaVersion: 1,
+      id: 'prompt-continue-default',
+      title: '默认续写',
+      kind: 'continue',
+      description: '根据当前章节末尾、相关资料库和用户要求续写正文。',
+      system: '你是 LoreDock 的长篇小说续写引擎。只输出正文，保持文风、人物状态、世界规则和时间线一致。',
+      user: '{{context}}\n\n请续写当前章节。额外要求：{{instruction}}',
+      tags: ['内置', '正文'],
+      createdAt: timestamp,
+      updatedAt: timestamp
+    },
+    {
+      schemaVersion: 1,
+      id: 'prompt-polish-default',
+      title: '默认润色',
+      kind: 'polish',
+      description: '润色选中文本，保留事实和剧情结果。',
+      system: '你是 LoreDock 的局部润色引擎。只输出改写后的正文。',
+      user: '{{context}}\n\n请润色选中文本。润色要求：{{instruction}}',
+      tags: ['内置', '润色'],
+      createdAt: timestamp,
+      updatedAt: timestamp
+    },
+    {
+      schemaVersion: 1,
+      id: 'prompt-worldbuild-review',
+      title: '世界观审查',
+      kind: 'worldbuild',
+      description: '检查世界观、角色关系和事件因果是否缺口明显。',
+      system: '你是长篇小说世界观编辑。请区分正史、推测和待确认问题。',
+      user: '{{context}}\n\n请列出关键矛盾、缺口、可确认问题和建议更新的资料卡。',
+      tags: ['内置', '世界观'],
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }
+  ];
 }
 
 function isNegatedRuleMentioned(chapterText: string, ruleContent: string): boolean {

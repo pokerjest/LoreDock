@@ -53,6 +53,7 @@ function renderContextPreview(
               ${escapeHtml(section.title)}${section.alwaysInclude ? '（必需）' : ''}
             </label>
           </summary>
+          ${section.reason ? `<div class="reason">为什么发送：${escapeHtml(section.reason)}</div>` : ''}
           <pre>${escapeHtml(section.body)}</pre>
         </details>`
     )
@@ -77,6 +78,7 @@ function renderContextPreview(
     main { padding: 14px 20px 90px; max-width: 980px; }
     details { border: 1px solid var(--vscode-panel-border); border-radius: 6px; margin: 10px 0; background: var(--vscode-sideBar-background); }
     summary { cursor: pointer; padding: 10px 12px; font-weight: 600; }
+    .reason { color: var(--vscode-descriptionForeground); border-top: 1px solid color-mix(in srgb, var(--vscode-panel-border), transparent 45%); padding: 8px 12px 0; line-height: 1.5; }
     label { cursor: pointer; }
     input { vertical-align: middle; margin-right: 8px; }
     pre { white-space: pre-wrap; margin: 0; padding: 0 12px 12px; line-height: 1.55; font-family: var(--vscode-editor-font-family); }
