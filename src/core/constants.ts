@@ -3,6 +3,7 @@ export const PROJECT_FILE = '.loredock/project.json';
 export const SUMMARY_DIR = '.loredock/summaries';
 export const OUTLINES_DIR = '.loredock/outlines';
 export const BLUEPRINTS_DIR = '.loredock/blueprints';
+export const BLUEPRINT_MARKDOWN_DIR = '.loredock/blueprints-md';
 export const TIMELINE_WORKSPACE_DIR = '.loredock/timeline';
 export const TIMELINE_STORE_FILE = '.loredock/timeline/timelines.json';
 export const TIMELINE_INDEX_FILE = '.loredock/timeline/index.json';

@@ -580,6 +580,146 @@ test('timeline workbench html keeps simplified default controls and advanced man
   assert.doesNotMatch(source, /id="resources"/);
 });
 
+test('blueprint context delete preserves multi-selection', async () => {
+  const source = await fs.readFile(path.join(process.cwd(), 'src', 'webviews', 'blueprintPanel.ts'), 'utf8');
+
+  assert.match(source, /rightClickedSelected = selectedNodeIds\.has\(el\.dataset\.id\) \|\| selectedNodeId === el\.dataset\.id/);
+  assert.match(source, /if \(!rightClickedSelected\) \{/);
+  assert.match(source, /selectedNodeIds\.size > 1/);
+});
+
+test('blueprint panel exposes relation layers brush focus and batch operations', async () => {
+  const source = await fs.readFile(path.join(process.cwd(), 'src', 'webviews', 'blueprintPanel.ts'), 'utf8');
+
+  for (const id of [
+    'edgeLayers',
+    'relationBrush',
+    'focusMode',
+    'chainEdges',
+    'toFirstEdges',
+    'toLastEdges',
+    'meshEdges',
+    'reverseEdge',
+    'edgeNote',
+    'edgeStrength',
+    'edgeStatus',
+    'nodeTags',
+    'nodeWidth',
+    'nodeHeight',
+    'nodeLocked',
+    'nodeCollapsed',
+    'collapseNodes',
+    'expandNodes',
+    'lockNodes',
+    'unlockNodes',
+    'alignLeftNodes',
+    'alignTopNodes',
+    'sameSizeNodes',
+    'blueprintSearch',
+    'searchPrev',
+    'searchNext',
+    'searchCount',
+    'saveViewport',
+    'viewportBookmarkSelect',
+    'deleteViewport',
+    'minimap',
+    'exportMarkdown',
+    'importMarkdown',
+    'previewMarkdownSync',
+    'markdownSync',
+    'loadMarkdownSync',
+    'exportMarkdownFromSync',
+    'importMarkdownFromSync'
+  ]) {
+    assert.match(source, new RegExp(`id="${id}"`));
+  }
+  assert.match(source, /function createBatchEdges\(mode\)/);
+  assert.match(source, /function reverseSelectedEdges\(\)/);
+  assert.match(source, /function connectSelectedToNode/);
+  assert.match(source, /function connectNodeToSelected/);
+  assert.match(source, /function focusedNodeIds\(\)/);
+  assert.match(source, /function pathNodeIds\(start, end\)/);
+  assert.match(source, /function selectPathEndpoint\(nodeId\)/);
+  assert.match(source, /function isEdgeVisibleForReading\(edge\)/);
+  assert.match(source, /function renderRelationIssuesPanel\(\)/);
+  assert.match(source, /function focusRelationIssue\(issueId\)/);
+  assert.match(source, /function centerOnEdge\(edge\)/);
+  assert.match(source, /function nodeVisualHeight\(node\)/);
+  assert.match(source, /function parseTags\(value\)/);
+  assert.match(source, /function toggleNodeCollapse\(nodeId\)/);
+  assert.match(source, /function toggleNodeLock\(nodeId\)/);
+  assert.match(source, /function refreshSearchResults\(keepIndex\)/);
+  assert.match(source, /function jumpSearchResult\(delta\)/);
+  assert.match(source, /function saveViewportBookmark\(\)/);
+  assert.match(source, /function deleteSelectedViewportBookmark\(\)/);
+  assert.match(source, /function renderMinimap\(\)/);
+  assert.match(source, /function panFromMinimapEvent\(event\)/);
+  assert.match(source, /function blueprintBounds\(\)/);
+  assert.match(source, /function focusViewportOnPoint\(x, y, readable = true\)/);
+  assert.match(source, /function restoreViewport\(bookmark\)/);
+  assert.match(source, /renderMarkdownSyncPanel/);
+  assert.match(source, /wireMarkdownSyncPanel/);
+  assert.match(source, /command: 'export-markdown'/);
+  assert.match(source, /command: 'import-markdown'/);
+  assert.match(source, /command: 'preview-markdown-sync'/);
+  assert.match(source, /command: 'apply-markdown-sync'/);
+  assert.match(source, /id="pathStatus"/);
+  assert.match(source, /id="relationIssues"/);
+  assert.match(source, /data-relation-issue/);
+  assert.match(source, /viewportBookmarks/);
+  assert.match(source, /semantic\.lines/);
+  assert.match(source, /edge\.label/);
+  assert.match(source, /edge\.note/);
+  assert.match(source, /minimap-viewport/);
+  assert.match(source, /minimap-node/);
+  assert.match(source, /class="resizeHandle"/);
+  assert.match(source, /classList\.contains\('resizeHandle'\)/);
+  assert.match(source, /node\.locked/);
+  assert.match(source, /node\.collapsed/);
+  assert.match(source, /node-tags/);
+  assert.doesNotMatch(source, /class="ports/);
+  assert.doesNotMatch(source, /port-editor/);
+  assert.doesNotMatch(source, /connectPortRefs/);
+  assert.match(source, /function edgeEndpoints\(edge\)/);
+  assert.match(source, /function setEdgeType\(edgeId, type\)/);
+  assert.match(source, /function deleteEdgeById\(edgeId\)/);
+  assert.match(source, /function renderConnectionPreview\(\)/);
+  assert.match(source, /function nodeAnchorForPoint\(node, point\)/);
+  assert.match(source, /document\.elementFromPoint\(event\.clientX, event\.clientY\)\?\.closest\('\.node'\)/);
+  assert.match(source, /!event\.target\.closest\('\.node-head'\)/);
+  assert.match(source, /class="edge-preview"/);
+  assert.match(source, /改为剧情流/);
+  assert.match(source, /fromPortId/);
+  assert.match(source, /toPortId/);
+  assert.match(source, /恢复显示全部/);
+  assert.match(source, /只看此节点关系/);
+  assert.match(source, /起点：/);
+  assert.match(source, /终点：/);
+  assert.match(source, /缺少说明/);
+  assert.match(source, /废弃关系：不建议参与当前结构判断/);
+  assert.match(source, /issueId\.startsWith\('node:'\)/);
+  assert.match(source, /if \(!isEdgeVisibleForReading\(edge\)\) continue;/);
+  assert.match(source, /data-edge-layer/);
+  assert.match(source, /\.edge\.deprecated/);
+  assert.match(source, /\.edge-tip/);
+});
+
+test('documents blueprint markdown conversion rules for agents', async () => {
+  const agents = await fs.readFile(path.join(process.cwd(), 'AGENTS.md'), 'utf8');
+  const readme = await fs.readFile(path.join(process.cwd(), 'README.md'), 'utf8');
+
+  assert.match(agents, /@blueprint/);
+  assert.match(agents, /@node/);
+  assert.match(agents, /@edge|@wire/);
+  assert.match(agents, /\.loredock\/blueprints-md\//);
+  assert.match(agents, /hidden HTML comments|base64/);
+  assert.match(agents, /manuscript\//);
+  assert.match(agents, /Conflicts default to skip|冲突/);
+  assert.match(agents, /Do not add AI|AI/);
+  assert.match(readme, /AGENTS\.md/);
+  assert.match(readme, /蓝图 Markdown/);
+});
+
 test('deletes the LoreDock book project folders without deleting workspace root', async () => {
   const storage = await initializedStorage();
   await storage.createCharacter({ name: '临时人物' });
@@ -921,7 +1061,10 @@ test('persists blueprint node layout and edge metadata', async () => {
         width: 210,
         height: 100,
         note: '先给读者一个钩子。',
-        color: '#4e9aef'
+        color: '#4e9aef',
+        tags: ['开场', '关键'],
+        locked: true,
+        collapsed: true
       },
       {
         id: 'node-b',
@@ -943,6 +1086,9 @@ test('persists blueprint node layout and edge metadata', async () => {
         type: 'conflicts',
         label: '升级'
       }
+    ],
+    viewportBookmarks: [
+      { id: 'view-main', title: '主视角', x: -120, y: 80, scale: 1.2, createdAt: '2026-01-01T00:00:00.000Z' }
     ]
   });
 
@@ -953,8 +1099,142 @@ test('persists blueprint node layout and edge metadata', async () => {
   assert.equal(saved.nodes[1].height, 130);
   assert.equal(saved.nodes[0].note, '先给读者一个钩子。');
   assert.equal(saved.nodes[1].color, '#d77922');
+  assert.deepEqual(saved.nodes[0].tags, ['开场', '关键']);
+  assert.equal(saved.nodes[0].locked, true);
+  assert.equal(saved.nodes[0].collapsed, true);
+  assert.deepEqual(saved.nodes[1].tags, []);
+  assert.equal(saved.nodes[1].locked, false);
+  assert.equal(saved.nodes[1].collapsed, false);
   assert.equal(saved.edges[0].type, 'conflicts');
   assert.equal(saved.edges[0].label, '升级');
+  assert.deepEqual(saved.viewportBookmarks?.map((bookmark) => ({ id: bookmark.id, title: bookmark.title, x: bookmark.x, y: bookmark.y, scale: bookmark.scale })), [
+    { id: 'view-main', title: '主视角', x: -120, y: 80, scale: 1.2 }
+  ]);
+});
+
+test('exports and imports blueprint markdown with plaintext blueprint code', async () => {
+  const storage = await initializedStorage();
+  const blueprint = await storage.createBlueprint('Markdown 蓝图');
+  const saved = await storage.writeBlueprint({
+    ...blueprint,
+    nodes: [
+      { id: 'node-a', kind: 'scene', title: '雨夜入城', x: 10, y: 20, width: 260, height: 120, note: '开场场景', color: '#4e9aef', tags: ['开场'], locked: true, collapsed: true },
+      { id: 'node-b', kind: 'beat', title: '守卫盘问', x: 320, y: 40, width: 220, height: 104, note: '制造阻碍', color: '#c586c0' }
+    ],
+    edges: [
+      { id: 'edge-a-b', fromNodeId: 'node-a', toNodeId: 'node-b', type: 'flow', label: '推进', note: '从场景到 Beat', strength: 'strong', status: 'confirmed' },
+      { id: 'edge-conflict', fromNodeId: 'node-b', toNodeId: 'node-a', type: 'conflicts', label: '误解', note: '身份不明', strength: 'weak', status: 'draft' }
+    ],
+    viewportBookmarks: [
+      { id: 'view-main', title: '主视角', x: -120, y: 40, scale: 1.1, createdAt: '2026-01-01T00:00:00.000Z' }
+    ]
+  });
+
+  const relativePath = await storage.exportBlueprintToMarkdown(saved.id);
+  const markdown = await fs.readFile(storage.resolve(relativePath), 'utf8');
+  const imported = await storage.importBlueprintFromMarkdown(markdown, '还原蓝图');
+
+  assert.equal(relativePath.startsWith('.loredock/blueprints-md/'), true);
+  assert.match(markdown, /### 雨夜入城/);
+  assert.match(markdown, /@blueprint/);
+  assert.match(markdown, /@node .*id="node-a"/);
+  assert.match(markdown, /@port .*node="node-a".*id="out"/);
+  assert.match(markdown, /@wire .*from="node-a\.out".*to="node-b\.in"/);
+  assert.doesNotMatch(markdown, /^@edge /m);
+  assert.match(markdown, /@view .*id="view-main"/);
+  assert.equal(markdown.includes('<!-- loredock-blueprint-meta'), false);
+  assert.equal(imported.nodes.some((node) => node.title === '雨夜入城' && node.locked && node.collapsed && node.tags?.includes('开场') && node.ports?.some((port) => port.id === 'out')), true);
+  assert.equal(imported.edges.some((edge) => edge.id === 'edge-conflict' && edge.type === 'conflicts' && edge.note === '身份不明' && edge.fromPortId === 'conflicts' && edge.toPortId === 'conflictIn'), true);
+  assert.equal(imported.viewportBookmarks?.some((bookmark) => bookmark.id === 'view-main' && bookmark.scale === 1.1), true);
+});
+
+test('imports legacy blueprint markdown edges as port wires', async () => {
+  const storage = await initializedStorage();
+
+  const blueprint = await storage.importBlueprintFromMarkdown([
+    '# 蓝图 旧格式',
+    '@blueprint id="legacy-blueprint" title="旧格式"',
+    '## 大纲',
+    '### A',
+    '### B',
+    '## 蓝图代码',
+    '@node id="a" kind="scene" title="A" x=0 y=0 width=220 height=104',
+    '@node id="b" kind="beat" title="B" x=260 y=0 width=220 height=104',
+    '@edge id="legacy-edge" from="a" to="b" type="flow"'
+  ].join('\n'), '旧格式');
+
+  const edge = blueprint.edges.find((item) => item.id === 'legacy-edge');
+  assert.equal(edge?.fromPortId, 'out');
+  assert.equal(edge?.toPortId, 'in');
+  assert.equal(blueprint.nodes.every((node) => node.ports?.some((port) => port.id === 'out')), true);
+});
+
+test('imports plain markdown as outline-only blueprint with flow relations', async () => {
+  const storage = await initializedStorage();
+
+  const blueprint = await storage.importBlueprintFromMarkdown('# 第一卷\n## 第一章\n### 城门冲突\n- 守卫盘问\n', '纯净大纲');
+
+  assert.equal(blueprint.nodes.some((node) => node.title === '城门冲突'), true);
+  assert.equal(blueprint.nodes.some((node) => node.title === '守卫盘问'), true);
+  assert.equal(blueprint.edges.every((edge) => edge.type === 'flow'), true);
+  assert.equal(blueprint.edges.some((edge) => edge.fromNodeId && edge.toNodeId), true);
+});
+
+test('previews and applies blueprint markdown sync explicitly', async () => {
+  const storage = await initializedStorage();
+  const blueprint = await storage.createBlueprint('同步 Markdown 蓝图');
+  const withNode = await storage.writeBlueprint({
+    ...blueprint,
+    nodes: [{ id: 'node-a', kind: 'note', title: '旧标题', x: 0, y: 0, width: 220, height: 104, note: '旧备注' }],
+    edges: []
+  });
+
+  const relativePath = await storage.exportBlueprintToMarkdown(withNode.id);
+  await storage.writeBlueprint({
+    ...withNode,
+    nodes: [{ ...withNode.nodes[0], title: '新标题' }]
+  });
+  const preview = await storage.previewBlueprintMarkdownSync(withNode.id, relativePath);
+  const pushed = await storage.applyBlueprintMarkdownSync(withNode.id, relativePath, [{ itemId: 'blueprint', action: 'push' }]);
+  const afterPush = await storage.previewBlueprintMarkdownSync(pushed.id, relativePath);
+
+  assert.equal(preview.summary.conflict, 1);
+  assert.equal(preview.items.some((item) => item.id === 'node:node-a' && item.defaultAction === 'skip'), true);
+  assert.equal(afterPush.summary.conflict, 0);
+  assert.equal(afterPush.summary.unchanged > 0, true);
+});
+
+test('reports old hidden blueprint markdown format in project health', async () => {
+  const storage = await initializedStorage();
+  await fs.mkdir(storage.resolve('.loredock/blueprints-md'), { recursive: true });
+  await fs.writeFile(storage.resolve('.loredock/blueprints-md/bad.md'), '# 坏蓝图\n\n<!-- loredock-blueprint-meta\nnot-base64\n-->\n', 'utf8');
+
+  const report = await storage.buildProjectHealthReport();
+
+  assert.equal(hasHealthIssue(report, 'plan', 'warning', /旧隐藏元数据格式/), true);
+});
+
+test('reports blueprint wire port issues in project health', async () => {
+  const storage = await initializedStorage();
+  const blueprint = await storage.createBlueprint('端口健康蓝图');
+  await storage.writeBlueprint({
+    ...blueprint,
+    nodes: [
+      { id: 'node-a', kind: 'scene', title: 'A', x: 0, y: 0, width: 220, height: 104 },
+      { id: 'node-b', kind: 'beat', title: 'B', x: 260, y: 0, width: 220, height: 104 }
+    ],
+    edges: [
+      { id: 'bad-port', fromNodeId: 'node-a', toNodeId: 'node-b', fromPortId: 'missing', toPortId: 'in', type: 'flow' },
+      { id: 'bad-direction', fromNodeId: 'node-a', toNodeId: 'node-b', fromPortId: 'in', toPortId: 'out', type: 'flow' },
+      { id: 'bad-kind', fromNodeId: 'node-a', toNodeId: 'node-b', fromPortId: 'uses', toPortId: 'usedBy', type: 'flow' }
+    ]
+  });
+
+  const report = await storage.buildProjectHealthReport();
+
+  assert.equal(hasHealthIssue(report, 'plan', 'warning', /蓝图连线端口缺失/), true);
+  assert.equal(hasHealthIssue(report, 'plan', 'warning', /蓝图连线端口方向错误/), true);
+  assert.equal(hasHealthIssue(report, 'plan', 'info', /蓝图连线端口语义不匹配/), true);
 });
 
 test('deletes blueprint nodes with connected edges without touching manuscript or outlines', async () => {
@@ -1008,6 +1288,105 @@ test('duplicates blueprint nodes with new ids and offset layout', async () => {
   assert.equal(copy.height, 120);
   assert.equal(copy.x, 46);
   assert.equal(copy.y, 56);
+});
+
+test('creates blueprint relation batches while avoiding duplicate same-direction edges', async () => {
+  const storage = await initializedStorage();
+  const blueprint = await storage.createBlueprint('批量关系蓝图');
+  await storage.writeBlueprint({
+    ...blueprint,
+    nodes: [
+      { id: 'node-a', kind: 'note', title: 'A', x: 0, y: 0, width: 220, height: 104 },
+      { id: 'node-b', kind: 'note', title: 'B', x: 260, y: 0, width: 220, height: 104 },
+      { id: 'node-c', kind: 'note', title: 'C', x: 520, y: 0, width: 220, height: 104 }
+    ],
+    edges: []
+  });
+
+  let updated = await storage.createBlueprintEdges(blueprint.id, [
+    { fromNodeId: 'node-a', toNodeId: 'node-b' },
+    { fromNodeId: 'node-a', toNodeId: 'node-b' },
+    { fromNodeId: 'node-b', toNodeId: 'node-c' },
+    { fromNodeId: 'node-c', toNodeId: 'node-b' },
+    { fromNodeId: 'node-a', toNodeId: 'node-a' },
+    { fromNodeId: 'node-a', toNodeId: 'missing-node' }
+  ], { type: 'supports', label: '证据', note: '批量整理', strength: 'strong', status: 'confirmed' });
+  updated = await storage.createBlueprintEdges(blueprint.id, [
+    { fromNodeId: 'node-a', toNodeId: 'node-b' }
+  ], { type: 'supports' });
+
+  assert.deepEqual(updated.edges.map((edge) => `${edge.fromNodeId}->${edge.toNodeId}:${edge.type}`).sort(), [
+    'node-a->node-b:supports',
+    'node-b->node-c:supports',
+    'node-c->node-b:supports'
+  ]);
+  assert.equal(updated.edges.every((edge) => edge.label === '证据'), true);
+  assert.equal(updated.edges.every((edge) => edge.note === '批量整理'), true);
+  assert.equal(updated.edges.every((edge) => edge.strength === 'strong'), true);
+  assert.equal(updated.edges.every((edge) => edge.status === 'confirmed'), true);
+});
+
+test('reverses and updates blueprint relations without losing metadata', async () => {
+  const storage = await initializedStorage();
+  const blueprint = await storage.createBlueprint('反转关系蓝图');
+  await storage.writeBlueprint({
+    ...blueprint,
+    nodes: [
+      { id: 'node-a', kind: 'note', title: 'A', x: 0, y: 0, width: 220, height: 104 },
+      { id: 'node-b', kind: 'note', title: 'B', x: 260, y: 0, width: 220, height: 104 }
+    ],
+    edges: [
+      {
+        id: 'edge-a-b',
+        fromNodeId: 'node-a',
+        toNodeId: 'node-b',
+        type: 'conflicts',
+        label: '误解',
+        note: '两人掌握的信息不一致。',
+        strength: 'weak',
+        status: 'draft'
+      }
+    ]
+  });
+
+  let updated = await storage.reverseBlueprintEdges(blueprint.id, ['edge-a-b']);
+  updated = await storage.updateBlueprintEdges(updated.id, ['edge-a-b'], { type: 'blocks', strength: 'strong', status: 'confirmed' });
+  const edge = updated.edges[0];
+
+  assert.equal(edge.fromNodeId, 'node-b');
+  assert.equal(edge.toNodeId, 'node-a');
+  assert.equal(edge.type, 'blocks');
+  assert.equal(edge.label, '误解');
+  assert.equal(edge.note, '两人掌握的信息不一致。');
+  assert.equal(edge.strength, 'strong');
+  assert.equal(edge.status, 'confirmed');
+  assert.ok(edge.updatedAt);
+});
+
+test('normalizes legacy blueprint relations with default metadata', async () => {
+  const storage = await initializedStorage();
+  const blueprint = await storage.createBlueprint('旧关系蓝图');
+  await storage.writeBlueprint({
+    ...blueprint,
+    nodes: [
+      { id: 'node-a', kind: 'note', title: 'A', x: 0, y: 0, width: 220, height: 104 },
+      { id: 'node-b', kind: 'note', title: 'B', x: 260, y: 0, width: 220, height: 104 }
+    ],
+    edges: [
+      { id: 'legacy-edge', fromNodeId: 'node-a', toNodeId: 'node-b', type: 'flow' }
+    ]
+  });
+
+  const saved = await storage.readBlueprint(blueprint.id);
+  const edge = saved?.edges[0];
+
+  assert.ok(edge);
+  assert.equal(edge.note, '');
+  assert.equal(edge.strength, 'normal');
+  assert.equal(edge.status, 'draft');
+  assert.ok(edge.createdAt);
+  assert.ok(edge.updatedAt);
+  assert.deepEqual(saved?.viewportBookmarks, []);
 });
 
 test('auto-layouts blueprint flow graph deterministically', async () => {
@@ -1203,6 +1582,42 @@ test('deletes outline resource and removes blueprint outline references', async 
   assert.equal(cleaned?.edges.length, 0);
 });
 
+test('renames outline resource and updates bound blueprint labels', async () => {
+  const storage = await initializedStorage();
+  const imported = await storage.importOutlineToPlan('# 第一卷\n## 第一章\n### 入城\n- 盘问\n');
+  const blueprint = await storage.createBlueprintFromOutline(imported.document.id);
+
+  const renamed = await storage.renameOutline(imported.document.id, '新的大纲名');
+  const updatedBlueprint = await storage.readBlueprint(blueprint.id);
+
+  assert.equal(renamed.title, '新的大纲名');
+  assert.equal(updatedBlueprint?.title, '新的大纲名');
+  assert.equal(updatedBlueprint?.outlinePath?.includes('.loredock/outlines/'), true);
+});
+
+test('outline view title only keeps refresh while outline context exposes actions', async () => {
+  const manifest = JSON.parse(await fs.readFile(path.join(process.cwd(), 'package.json'), 'utf8')) as {
+    contributes: {
+      menus: {
+        'view/title': Array<{ command: string; when?: string }>;
+        'view/item/context': Array<{ command: string; when?: string }>;
+      };
+    };
+  };
+  const outlineTitleCommands = manifest.contributes.menus['view/title']
+    .filter((item) => item.when === 'view == loredock.outlines')
+    .map((item) => item.command);
+  const outlineContextCommands = manifest.contributes.menus['view/item/context']
+    .filter((item) => item.when === 'view == loredock.outlines && viewItem == loredock.outline')
+    .map((item) => item.command);
+
+  assert.deepEqual(outlineTitleCommands, ['loredock.refreshViews']);
+  assert.ok(outlineContextCommands.includes('loredock.openBlueprintForOutline'));
+  assert.ok(outlineContextCommands.includes('loredock.openOutlineSource'));
+  assert.ok(outlineContextCommands.includes('loredock.renameOutline'));
+  assert.ok(outlineContextCommands.includes('loredock.deleteOutline'));
+});
+
 test('applies blueprint sync delete-source for codex nodes', async () => {
   const storage = await initializedStorage();
   const location = await storage.createLocation({ name: '待同步删除地点' });
@@ -1370,6 +1785,31 @@ test('analyzes blueprint edge semantics without blocking save', async () => {
   assert.equal(issues.some((issue) => /伏笔关系未连接伏笔节点/.test(issue.title)), true);
   assert.equal(issues.some((issue) => /冲突\/阻碍连线自环/.test(issue.title)), true);
   assert.equal(issues.some((issue) => /重复语义连线/.test(issue.title)), true);
+});
+
+test('reports strengthened blueprint relation semantic issues', async () => {
+  const storage = await initializedStorage();
+  const blueprint = await storage.createBlueprint('强化关系健康蓝图');
+  await storage.writeBlueprint({
+    ...blueprint,
+    nodes: [
+      { id: 'node-a', kind: 'outline', title: '大纲 A', x: 0, y: 0, width: 220, height: 104 },
+      { id: 'node-b', kind: 'outline', title: '大纲 B', x: 260, y: 0, width: 220, height: 104 },
+      { id: 'node-c', kind: 'scene', title: '孤立场景', x: 520, y: 0, width: 220, height: 104 }
+    ],
+    edges: [
+      { id: 'flow-old', fromNodeId: 'node-a', toNodeId: 'node-b', type: 'flow', status: 'deprecated' },
+      { id: 'flow-reverse', fromNodeId: 'node-b', toNodeId: 'node-a', type: 'flow' },
+      { id: 'conflict-empty', fromNodeId: 'node-a', toNodeId: 'node-b', type: 'conflicts' }
+    ]
+  });
+
+  const issues = await storage.analyzeBlueprintEdgeSemantics(blueprint.id);
+
+  assert.equal(issues.some((issue) => /废弃关系仍参与剧情流/.test(issue.title)), true);
+  assert.equal(issues.some((issue) => /重复反向关系/.test(issue.title)), true);
+  assert.equal(issues.some((issue) => /冲突关系缺少说明/.test(issue.title)), true);
+  assert.equal(issues.some((issue) => issue.edgeId === 'node:node-c' && /关键节点孤立/.test(issue.title)), true);
 });
 
 test('returns field-level diffs in blueprint sync preview', async () => {

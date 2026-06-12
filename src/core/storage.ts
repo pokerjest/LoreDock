@@ -4,6 +4,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import {
   BEATS_DIR,
+  BLUEPRINT_MARKDOWN_DIR,
   BLUEPRINTS_DIR,
   CHARACTERS_DIR,
   CODEX_DIR,
@@ -36,11 +37,21 @@ import {
   CharacterRelationship,
   CharacterCard,
   BlueprintDocument,
+  BlueprintEdgeType,
   BlueprintEdgeSemanticIssue,
   BlueprintNode,
   BlueprintNodeSemanticSummary,
   BlueprintPanelState,
+  BlueprintPort,
+  BlueprintPortDirection,
+  BlueprintPortKind,
+  BlueprintEdgeStrength,
+  BlueprintEdgeStatus,
   BlueprintRefKind,
+  BlueprintMarkdownSyncAction,
+  BlueprintMarkdownSyncItem,
+  BlueprintMarkdownSyncPreview,
+  BlueprintMarkdownSyncStatus,
   BlueprintSyncDecision,
   BlueprintSyncFieldDiff,
   BlueprintSyncItem,
@@ -688,12 +699,46 @@ export class LoreDockStorage {
     );
   }
 
+  public async renameOutline(outlineId: string, title: string): Promise<OutlineDocument> {
+    const outline = (await this.listOutlines()).find((candidate) => candidate.id === outlineId);
+    if (!outline) {
+      throw new Error(`找不到大纲：${outlineId}`);
+    }
+    const nextTitle = title.trim();
+    if (!nextTitle) {
+      throw new Error('大纲标题不能为空。');
+    }
+    const oldPath = await this.outlineRelativePath(outline);
+    const updated = await this.writeOutlineDocument({
+      ...outline,
+      title: nextTitle
+    });
+    const newPath = await this.outlineRelativePath(updated);
+    if (oldPath !== newPath) {
+      await fs.rm(this.resolve(oldPath), { force: true });
+    }
+    const blueprints = await this.listBlueprints();
+    for (const blueprint of blueprints) {
+      if (blueprint.outlineId !== outlineId && !blueprint.nodes.some((node) => node.refKind === 'outline' && node.refId === outlineId)) {
+        continue;
+      }
+      await this.writeBlueprint({
+        ...blueprint,
+        title: blueprint.outlineId === outlineId ? nextTitle : blueprint.title,
+        outlinePath: blueprint.outlineId === outlineId ? newPath : blueprint.outlinePath,
+        nodes: blueprint.nodes.map((node) => node.refKind === 'outline' && node.refId === outlineId ? { ...node, title: nextTitle, refPath: newPath } : node)
+      });
+    }
+    return updated;
+  }
+
   public async listBlueprints(): Promise<BlueprintDocument[]> {
     await this.requireManifest();
-    return this.listJsonDirectory<BlueprintDocument>(
+    const blueprints = await this.listJsonDirectory<BlueprintDocument>(
       BLUEPRINTS_DIR,
       (left, right) => right.updatedAt.localeCompare(left.updatedAt)
     );
+    return blueprints.map(normalizeBlueprintDocumentForRead);
   }
 
   public async ensureBlueprintOutlineBindings(): Promise<BlueprintDocument[]> {
@@ -761,12 +806,154 @@ export class LoreDockStorage {
       outlinePath: document.outlinePath || await this.resolveBlueprintOutlinePath(document.outlineId),
       nodes: document.nodes.map(normalizeBlueprintNode),
       edges: document.edges.map(normalizeBlueprintEdge),
+      viewportBookmarks: Array.isArray(document.viewportBookmarks) ? document.viewportBookmarks.map(normalizeBlueprintViewportBookmark) : [],
       createdAt: document.createdAt || timestamp,
       updatedAt: timestamp
     };
     await this.writeJson(await this.blueprintRelativePath(normalized), normalized);
     await this.syncBlueprintToOutlineIfNeeded(normalized);
     return normalized;
+  }
+
+  public async exportBlueprintToMarkdown(blueprintId: string): Promise<string> {
+    const blueprint = await this.readBlueprint(blueprintId);
+    if (!blueprint) {
+      throw new Error(`找不到蓝图：${blueprintId}`);
+    }
+    await fs.mkdir(this.resolve(BLUEPRINT_MARKDOWN_DIR), { recursive: true });
+    const relativePath = posixPath(BLUEPRINT_MARKDOWN_DIR, `${blueprint.id}-${slugify(blueprint.title)}.md`);
+    await fs.writeFile(this.resolve(relativePath), renderBlueprintMarkdown(blueprint), 'utf8');
+    return relativePath;
+  }
+
+  public async importBlueprintFromMarkdown(markdown: string, title = '导入蓝图'): Promise<BlueprintDocument> {
+    await this.requireManifest();
+    const parsed = parseBlueprintMarkdown(markdown);
+    if (parsed.blueprint) {
+      const imported = parsed.blueprint;
+      const existing = imported.id ? await this.readBlueprint(imported.id) : undefined;
+      let outlineId = imported.outlineId;
+      let outlinePath = imported.outlinePath;
+      if (!outlineId || !(await this.listOutlines()).some((outline) => outline.id === outlineId)) {
+        const outline = await this.createEmptyOutlineForBlueprint(imported.title || title);
+        outlineId = outline.id;
+        outlinePath = await this.outlineRelativePath(outline);
+      }
+      return this.writeBlueprint({
+        ...imported,
+        id: existing?.id || imported.id || makeId('blueprint'),
+        title: imported.title?.trim() || title,
+        outlineId,
+        outlinePath,
+        nodes: Array.isArray(imported.nodes) ? imported.nodes : [],
+        edges: Array.isArray(imported.edges) ? imported.edges : [],
+        viewportBookmarks: Array.isArray(imported.viewportBookmarks) ? imported.viewportBookmarks : [],
+        createdAt: existing?.createdAt || imported.createdAt || nowIso(),
+        updatedAt: nowIso()
+      });
+    }
+
+    const outline = await this.writeOutlineDocument({
+      schemaVersion: 1,
+      id: makeId('outline'),
+      title: title.trim() || shortTitle(parsed.body.split(/\r?\n/).find((line) => line.trim()) || '导入蓝图', '导入蓝图'),
+      rawText: parsed.body,
+      nodes: parseOutlineNodes(parsed.body),
+      createdAt: nowIso(),
+      updatedAt: nowIso()
+    });
+    return this.writeBlueprint(blueprintFromOutlineDocument(outline));
+  }
+
+  public async previewBlueprintMarkdownSync(blueprintId: string, markdownPath?: string): Promise<BlueprintMarkdownSyncPreview> {
+    const blueprint = await this.readBlueprint(blueprintId);
+    if (!blueprint) {
+      throw new Error(`找不到蓝图：${blueprintId}`);
+    }
+    const relativePath = markdownPath || await this.defaultBlueprintMarkdownPath(blueprint);
+    const markdownExists = await this.exists(relativePath);
+    const items: BlueprintMarkdownSyncItem[] = [];
+    if (!markdownExists) {
+      items.push({
+        id: 'markdown-file',
+        label: 'Markdown 文件',
+        status: 'missing',
+        detail: `尚未导出 Markdown：${relativePath}`,
+        defaultAction: 'push'
+      });
+    } else {
+      const markdown = await fs.readFile(this.resolve(relativePath), 'utf8');
+      const parsed = parseBlueprintMarkdown(markdown);
+      if (!parsed.blueprint) {
+        items.push({
+          id: 'markdown-structure',
+          label: 'Markdown 明文结构',
+          status: 'pull',
+          detail: 'Markdown 缺少可还原蓝图明文结构，只能按正文生成大纲结构。',
+          defaultAction: 'pull'
+        });
+      } else {
+        items.push(...buildBlueprintMarkdownSyncItems(blueprint, parsed.blueprint));
+      }
+    }
+    return {
+      schemaVersion: 1,
+      blueprintId,
+      markdownPath: relativePath,
+      generatedAt: nowIso(),
+      items,
+      summary: summarizeBlueprintMarkdownSyncItems(items)
+    };
+  }
+
+  public async applyBlueprintMarkdownSync(
+    blueprintId: string,
+    markdownPath: string | undefined,
+    decisions: Array<{ itemId: string; action: BlueprintMarkdownSyncAction }>
+  ): Promise<BlueprintDocument> {
+    const blueprint = await this.readBlueprint(blueprintId);
+    if (!blueprint) {
+      throw new Error(`找不到蓝图：${blueprintId}`);
+    }
+    const relativePath = markdownPath || await this.defaultBlueprintMarkdownPath(blueprint);
+    const activeDecisions = decisions.filter((decision) => decision.action !== 'skip');
+    if (!activeDecisions.length) {
+      return blueprint;
+    }
+    const wholePush = activeDecisions.some((decision) => (decision.itemId === 'markdown-file' || decision.itemId === 'blueprint') && decision.action === 'push');
+    if (wholePush || !(await this.exists(relativePath))) {
+      await fs.mkdir(this.resolve(BLUEPRINT_MARKDOWN_DIR), { recursive: true });
+      await fs.writeFile(this.resolve(relativePath), renderBlueprintMarkdown(blueprint), 'utf8');
+      return blueprint;
+    }
+    const markdown = await fs.readFile(this.resolve(relativePath), 'utf8');
+    const parsed = parseBlueprintMarkdown(markdown);
+    if (activeDecisions.some((decision) => decision.itemId === 'blueprint' && decision.action === 'pull')) {
+      return this.importBlueprintFromMarkdown(markdown, blueprint.title);
+    }
+    if (!parsed.blueprint) {
+      if (activeDecisions.some((decision) => decision.action === 'pull')) {
+        return this.importBlueprintFromMarkdown(markdown, blueprint.title);
+      }
+      await fs.writeFile(this.resolve(relativePath), renderBlueprintMarkdown(blueprint), 'utf8');
+      return blueprint;
+    }
+    let current = blueprint;
+    let markdownBlueprint = parsed.blueprint;
+    const pullDecisions = activeDecisions.filter((decision) => decision.action === 'pull');
+    if (pullDecisions.length) {
+      current = await this.writeBlueprint(mergeBlueprintMarkdownDecisionItems(current, markdownBlueprint, pullDecisions.map((decision) => decision.itemId)));
+    }
+    const pushDecisions = activeDecisions.filter((decision) => decision.action === 'push');
+    if (pushDecisions.length) {
+      markdownBlueprint = mergeBlueprintMarkdownDecisionItems(markdownBlueprint, current, pushDecisions.map((decision) => decision.itemId));
+      await fs.mkdir(this.resolve(BLUEPRINT_MARKDOWN_DIR), { recursive: true });
+      await fs.writeFile(this.resolve(relativePath), renderBlueprintMarkdown(markdownBlueprint), 'utf8');
+    }
+    if (activeDecisions.some((decision) => decision.itemId === 'markdown-structure' && decision.action === 'pull')) {
+      return this.importBlueprintFromMarkdown(markdown, blueprint.title);
+    }
+    return current;
   }
 
   public async deleteBlueprint(id: string): Promise<void> {
@@ -832,6 +1019,78 @@ export class LoreDockStorage {
     return this.writeBlueprint({
       ...blueprint,
       edges: blueprint.edges.filter((edge) => !removing.has(edge.id))
+    });
+  }
+
+  public async createBlueprintEdges(
+    blueprintId: string,
+    pairs: Array<{ fromNodeId: string; toNodeId: string }>,
+    options: { type: BlueprintEdgeType; label?: string; note?: string; strength?: BlueprintEdgeStrength; status?: BlueprintEdgeStatus }
+  ): Promise<BlueprintDocument> {
+    const blueprint = await this.readBlueprint(blueprintId);
+    if (!blueprint) {
+      throw new Error(`找不到蓝图：${blueprintId}`);
+    }
+    const nodeIds = new Set(blueprint.nodes.map((node) => node.id));
+    const existing = new Set(blueprint.edges.map((edge) => `${edge.fromNodeId}|${edge.toNodeId}|${edge.type}`));
+    const timestamp = nowIso();
+    const edges = [...blueprint.edges];
+    for (const pair of pairs) {
+      if (!nodeIds.has(pair.fromNodeId) || !nodeIds.has(pair.toNodeId) || pair.fromNodeId === pair.toNodeId) {
+        continue;
+      }
+      const key = `${pair.fromNodeId}|${pair.toNodeId}|${options.type}`;
+      if (existing.has(key)) {
+        continue;
+      }
+      existing.add(key);
+      edges.push({
+        id: makeId('bp-edge'),
+        fromNodeId: pair.fromNodeId,
+        toNodeId: pair.toNodeId,
+        fromPortId: defaultOutputPortForEdge(options.type),
+        toPortId: defaultInputPortForEdge(options.type),
+        type: options.type,
+        label: options.label ?? '',
+        note: options.note ?? '',
+        strength: options.strength ?? 'normal',
+        status: options.status ?? 'draft',
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
+    }
+    return this.writeBlueprint({ ...blueprint, edges });
+  }
+
+  public async reverseBlueprintEdges(blueprintId: string, edgeIds: string[]): Promise<BlueprintDocument> {
+    const blueprint = await this.readBlueprint(blueprintId);
+    if (!blueprint) {
+      throw new Error(`找不到蓝图：${blueprintId}`);
+    }
+    const reversing = new Set(edgeIds);
+    return this.writeBlueprint({
+      ...blueprint,
+      edges: blueprint.edges.map((edge) => reversing.has(edge.id)
+        ? { ...edge, fromNodeId: edge.toNodeId, toNodeId: edge.fromNodeId, fromPortId: edge.toPortId, toPortId: edge.fromPortId, updatedAt: nowIso() }
+        : edge)
+    });
+  }
+
+  public async updateBlueprintEdges(
+    blueprintId: string,
+    edgeIds: string[],
+    patch: Partial<Pick<BlueprintDocument['edges'][number], 'type' | 'label' | 'note' | 'strength' | 'status'>>
+  ): Promise<BlueprintDocument> {
+    const blueprint = await this.readBlueprint(blueprintId);
+    if (!blueprint) {
+      throw new Error(`找不到蓝图：${blueprintId}`);
+    }
+    const updating = new Set(edgeIds);
+    return this.writeBlueprint({
+      ...blueprint,
+      edges: blueprint.edges.map((edge) => updating.has(edge.id)
+        ? normalizeBlueprintEdge({ ...edge, ...patch, updatedAt: nowIso() })
+        : edge)
     });
   }
 
@@ -2299,6 +2558,9 @@ export class LoreDockStorage {
         suggestion: '修复损坏的蓝图 JSON 文件后重新检查。'
       });
     }
+    for (const issue of await this.buildBlueprintMarkdownHealthIssues()) {
+      addIssue(issue);
+    }
     const occurrences = await this.buildReferenceOccurrences(manifest, entries, summaries);
     const referencedCardIds = new Set(occurrences.map((occurrence) => occurrence.cardId));
     const manuscriptReferencedCardIds = new Set(
@@ -2662,6 +2924,21 @@ export class LoreDockStorage {
   private async blueprintRelativePath(document: BlueprintDocument): Promise<string> {
     const existing = await this.findJsonDocumentPathById(BLUEPRINTS_DIR, document.id);
     return existing ?? posixPath(BLUEPRINTS_DIR, `${document.id}-${slugify(document.title)}.json`);
+  }
+
+  private async defaultBlueprintMarkdownPath(document: BlueprintDocument): Promise<string> {
+    try {
+      const entries = await fs.readdir(this.resolve(BLUEPRINT_MARKDOWN_DIR), { withFileTypes: true });
+      const existing = entries.find((entry) => entry.isFile() && entry.name.endsWith('.md') && entry.name.startsWith(`${document.id}-`));
+      if (existing) {
+        return posixPath(BLUEPRINT_MARKDOWN_DIR, existing.name);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
+    }
+    return posixPath(BLUEPRINT_MARKDOWN_DIR, `${document.id}-${slugify(document.title)}.md`);
   }
 
   private async outlineRelativePath(document: OutlineDocument): Promise<string> {
@@ -3036,6 +3313,49 @@ export class LoreDockStorage {
       }
     }
     return { entries, issues };
+  }
+
+  private async buildBlueprintMarkdownHealthIssues(): Promise<ProjectHealthIssue[]> {
+    const issues: ProjectHealthIssue[] = [];
+    for (const relativePath of await this.listFilesRecursive(BLUEPRINT_MARKDOWN_DIR, new Set(['.md', '.markdown']))) {
+      const raw = await fs.readFile(this.resolve(relativePath), 'utf8');
+      if (/<!--\s*loredock-blueprint-meta/.test(raw)) {
+        issues.push({
+          severity: 'warning',
+          category: 'plan',
+          title: '蓝图 Markdown 使用旧隐藏元数据格式',
+          detail: '文件仍包含 loredock-blueprint-meta 隐藏块；当前格式要求全部蓝图数据以明文结构保存。',
+          source: relativePath,
+          suggestion: '从蓝图重新导出 Markdown，或改写为“@blueprint / @node / @edge / @view”明文蓝图代码。'
+        });
+        continue;
+      }
+      if (/^\s*@edge\s+/m.test(raw)) {
+        issues.push({
+          severity: 'info',
+          category: 'plan',
+          title: '蓝图 Markdown 使用旧 @edge 关系格式',
+          detail: '文件包含旧 @edge 指令；当前明文蓝图代码推荐使用 @wire node.port -> node.port 端口连线。',
+          source: relativePath,
+          suggestion: '重新从蓝图导出 Markdown，把旧 @edge 转成 @wire。'
+        });
+      }
+      if (!hasBlueprintMarkdownStructuredSections(raw)) {
+        continue;
+      }
+      const parsed = parseBlueprintMarkdown(raw);
+      if (!parsed.blueprint) {
+        issues.push({
+          severity: 'warning',
+          category: 'plan',
+          title: '蓝图 Markdown 明文结构无法解析',
+          detail: '文件包含蓝图结构章节，但节点、关系或视角字段无法还原成蓝图。',
+          source: relativePath,
+          suggestion: '检查“@node / @edge / @view”里的 id、from、to、type 等明文字段。'
+        });
+      }
+    }
+    return issues;
   }
 
   private async listFilesRecursive(relativeDirectory: string, extensions: Set<string>): Promise<string[]> {
@@ -3615,6 +3935,41 @@ function addBlueprintHealthIssues(
           suggestion: '删除坏连线，或重新连接到存在的蓝图节点。'
         });
       } else {
+        const fromNode = blueprint.nodes.find((node) => node.id === edge.fromNodeId);
+        const toNode = blueprint.nodes.find((node) => node.id === edge.toNodeId);
+        const fromPort = findBlueprintPort(fromNode, edge.fromPortId || defaultOutputPortForEdge(edge.type));
+        const toPort = findBlueprintPort(toNode, edge.toPortId || defaultInputPortForEdge(edge.type));
+        if (!fromPort || !toPort) {
+          context.addIssue({
+            severity: 'warning',
+            category: 'plan',
+            title: '蓝图连线端口缺失',
+            detail: `蓝图「${blueprint.title}」的连线 ${edge.id} 指向不存在端口：${edge.fromNodeId}.${edge.fromPortId || 'out'} -> ${edge.toNodeId}.${edge.toPortId || 'in'}。`,
+            source,
+            suggestion: '重新选择有效端口，或保存蓝图让旧连线自动补默认端口。'
+          });
+        } else {
+          if (fromPort.direction !== 'output' || toPort.direction !== 'input') {
+            context.addIssue({
+              severity: 'warning',
+              category: 'plan',
+              title: '蓝图连线端口方向错误',
+              detail: `蓝图「${blueprint.title}」的连线 ${edge.id} 不是从输出端口连到输入端口。`,
+              source,
+              suggestion: '把连线改为 output -> input，或反转关系后选择合适端口。'
+            });
+          }
+          if (!blueprintPortKindsMatchEdge(edge.type, fromPort.kind, toPort.kind)) {
+            context.addIssue({
+              severity: 'info',
+              category: 'plan',
+              title: '蓝图连线端口语义不匹配',
+              detail: `蓝图「${blueprint.title}」的连线 ${edge.id} 类型为 ${edge.type}，但端口语义是 ${fromPort.kind} -> ${toPort.kind}。`,
+              source,
+              suggestion: '选择匹配关系类型的端口，或把关系类型改成 custom。'
+            });
+          }
+        }
         connectedNodeIds.add(edge.fromNodeId);
         connectedNodeIds.add(edge.toNodeId);
       }
@@ -3721,6 +4076,31 @@ function addBlueprintHealthIssues(
 
 function isCodexBlueprintRefKind(value: string): value is CodexCard['kind'] {
   return ['character', 'location', 'world-rule', 'foreshadowing', 'scene', 'beat'].includes(value);
+}
+
+function findBlueprintPort(node: BlueprintNode | undefined, portId: string | undefined): BlueprintPort | undefined {
+  if (!node || !portId) {
+    return undefined;
+  }
+  return normalizeBlueprintPorts(node.ports, node.id).find((port) => port.id === portId);
+}
+
+function blueprintPortKindsMatchEdge(type: BlueprintEdgeType, fromKind: BlueprintPortKind, toKind: BlueprintPortKind): boolean {
+  if (type === 'custom') {
+    return true;
+  }
+  const expected: Record<BlueprintEdgeType, BlueprintPortKind[]> = {
+    flow: ['exec'],
+    uses: ['reference'],
+    foreshadows: ['foreshadow'],
+    resolves: ['resolve'],
+    conflicts: ['conflict'],
+    supports: ['cause'],
+    blocks: ['conflict'],
+    custom: ['custom']
+  };
+  const kinds = expected[type] || [];
+  return kinds.includes(fromKind) && (kinds.includes(toKind) || toKind === 'custom');
 }
 
 function getBlueprintSyncSourceForHealth(
@@ -3898,13 +4278,18 @@ function analyzeBlueprintEdgeSemanticIssues(blueprint: BlueprintDocument): Bluep
   const issues: BlueprintEdgeSemanticIssue[] = [];
   const nodes = new Map(blueprint.nodes.map((node) => [node.id, node]));
   const seen = new Map<string, string>();
+  const directedByPairAndType = new Map<string, BlueprintDocument['edges'][number]>();
+  const directedByNodePairAndType = new Map<string, BlueprintDocument['edges'][number]>();
+  const connectedNodeIds = new Set<string>();
   for (const edge of blueprint.edges) {
     const from = nodes.get(edge.fromNodeId);
     const to = nodes.get(edge.toNodeId);
     if (!from || !to) {
       continue;
     }
-    const duplicateKey = `${edge.fromNodeId}|${edge.toNodeId}|${edge.type}`;
+    connectedNodeIds.add(edge.fromNodeId);
+    connectedNodeIds.add(edge.toNodeId);
+    const duplicateKey = `${edge.fromNodeId}.${edge.fromPortId || defaultOutputPortForEdge(edge.type)}|${edge.toNodeId}.${edge.toPortId || defaultInputPortForEdge(edge.type)}|${edge.type}`;
     if (seen.has(duplicateKey)) {
       issues.push({
         edgeId: edge.id,
@@ -3916,6 +4301,19 @@ function analyzeBlueprintEdgeSemanticIssues(blueprint: BlueprintDocument): Bluep
     } else {
       seen.set(duplicateKey, edge.id);
     }
+    const nodePairKey = `${edge.fromNodeId}|${edge.toNodeId}|${edge.type}`;
+    const reverse = directedByNodePairAndType.get(`${edge.toNodeId}|${edge.fromNodeId}|${edge.type}`);
+    if (reverse && edge.type !== 'conflicts') {
+      issues.push({
+        edgeId: edge.id,
+        severity: 'info',
+        title: '蓝图存在重复反向关系',
+        detail: `连线 ${edge.id} 与 ${reverse.id} 在同一对节点之间使用相同类型但方向相反。`,
+        suggestion: '确认是否需要双向关系；如果只是重复表达，保留一个方向并删除另一个。'
+      });
+    }
+    directedByPairAndType.set(duplicateKey, edge);
+    directedByNodePairAndType.set(nodePairKey, edge);
     if ((edge.type === 'conflicts' || edge.type === 'blocks') && edge.fromNodeId === edge.toNodeId) {
       issues.push({
         edgeId: edge.id,
@@ -3923,6 +4321,24 @@ function analyzeBlueprintEdgeSemanticIssues(blueprint: BlueprintDocument): Bluep
         title: '蓝图冲突/阻碍连线自环',
         detail: `连线 ${edge.id} 从节点自身连回自身。`,
         suggestion: '连接到真正产生冲突或阻碍的另一节点，或删除自环。'
+      });
+    }
+    if (edge.type === 'conflicts' && !edge.note?.trim() && !edge.label?.trim()) {
+      issues.push({
+        edgeId: edge.id,
+        severity: 'info',
+        title: '蓝图冲突关系缺少说明',
+        detail: `连线 ${edge.id} 标记为冲突，但没有填写标签或说明。`,
+        suggestion: '补充冲突原因，便于之后排查剧情、设定或人物动机矛盾。'
+      });
+    }
+    if (edge.status === 'deprecated' && edge.type === 'flow') {
+      issues.push({
+        edgeId: edge.id,
+        severity: 'warning',
+        title: '蓝图废弃关系仍参与剧情流',
+        detail: `连线 ${edge.id} 已标记为废弃，但仍是 flow 类型，会继续参与大纲层级同步。`,
+        suggestion: '删除这条关系，或改成 custom/blocks 等不参与大纲同步的类型。'
       });
     }
     if ((edge.type === 'foreshadows' || edge.type === 'resolves') && !isForeshadowingBlueprintNode(from) && !isForeshadowingBlueprintNode(to)) {
@@ -3941,6 +4357,18 @@ function analyzeBlueprintEdgeSemanticIssues(blueprint: BlueprintDocument): Bluep
         title: '蓝图剧情流连接了非剧情节点',
         detail: `连线 ${edge.id} 使用剧情流，但连接到了非大纲/场景/Beat/时间线节点。`,
         suggestion: '如果这是依赖或支撑关系，改用 uses/supports；如果是剧情顺序，连接到规划节点。'
+      });
+    }
+  }
+  for (const node of blueprint.nodes) {
+    const keyNode = node.refKind === 'outline' || node.refKind === 'outline-node' || node.kind === 'outline' || node.kind === 'scene' || node.kind === 'beat';
+    if (keyNode && !connectedNodeIds.has(node.id)) {
+      issues.push({
+        edgeId: `node:${node.id}`,
+        severity: 'info',
+        title: '蓝图关键节点孤立',
+        detail: `节点「${node.title}」没有任何关系连线。`,
+        suggestion: '补充剧情流、使用、支撑或冲突关系，避免关键结构成为孤岛。'
       });
     }
   }
@@ -5096,6 +5524,683 @@ function renderOutlineRawText(nodes: OutlineNode[]): string {
     .join('\n');
 }
 
+function renderBlueprintMarkdown(blueprint: BlueprintDocument): string {
+  const body = renderOutlineRawText(projectBlueprintNodesToOutlineNodes(blueprint));
+  const lines = [
+    `# 蓝图 ${blueprint.title}`,
+    blueprintMarkdownDirective('blueprint', {
+      id: blueprint.id,
+      title: blueprint.title,
+      outlineId: blueprint.outlineId || '',
+      outlinePath: blueprint.outlinePath || '',
+      createdAt: blueprint.createdAt,
+      updatedAt: blueprint.updatedAt
+    }),
+    '',
+    '## 大纲',
+    body.trim(),
+    '',
+    '## 蓝图代码',
+    '',
+    '### 节点'
+  ];
+  for (const node of blueprint.nodes) {
+    const ports = normalizeBlueprintPorts(node.ports, node.id);
+    lines.push(blueprintMarkdownDirective('node', {
+      id: node.id,
+      kind: node.kind,
+      title: node.title,
+      refKind: node.refKind || '',
+      refId: node.refId || '',
+      refPath: node.refPath || '',
+      x: node.x,
+      y: node.y,
+      width: node.width,
+      height: node.height,
+      color: node.color || '',
+      tags: (node.tags || []).join(','),
+      locked: node.locked === true,
+      collapsed: node.collapsed === true
+    }));
+    if (node.note) {
+      lines.push(`note: ${node.note}`);
+    }
+    for (const port of ports) {
+      lines.push(blueprintMarkdownDirective('port', {
+        node: node.id,
+        id: port.id,
+        name: port.name,
+        label: port.label,
+        direction: port.direction,
+        kind: port.kind,
+        color: port.color || '',
+        locked: port.locked === true
+      }));
+    }
+  }
+  lines.push('', '### 关系');
+  for (const edge of blueprint.edges) {
+    const normalized = normalizeBlueprintEdge(edge);
+    lines.push(blueprintMarkdownDirective('wire', {
+      id: edge.id,
+      from: `${edge.fromNodeId}.${normalized.fromPortId || defaultOutputPortForEdge(edge.type)}`,
+      to: `${edge.toNodeId}.${normalized.toPortId || defaultInputPortForEdge(edge.type)}`,
+      type: edge.type,
+      label: edge.label || '',
+      strength: edge.strength || 'normal',
+      status: edge.status || 'draft',
+      createdAt: edge.createdAt || '',
+      updatedAt: edge.updatedAt || ''
+    }));
+    if (edge.note) {
+      lines.push(`note: ${edge.note}`);
+    }
+  }
+  lines.push('', '### 视角');
+  for (const bookmark of blueprint.viewportBookmarks || []) {
+    lines.push(blueprintMarkdownDirective('view', {
+      id: bookmark.id,
+      title: bookmark.title,
+      x: bookmark.x,
+      y: bookmark.y,
+      scale: bookmark.scale,
+      createdAt: bookmark.createdAt
+    }));
+  }
+  return `${lines.join('\n').replace(/\n{3,}/g, '\n\n').trim()}\n`;
+}
+
+function parseBlueprintMarkdown(markdown: string): { body: string; blueprint?: BlueprintDocument } {
+  const raw = stripUtf8Bom(markdown);
+  const body = extractBlueprintMarkdownOutlineBody(raw);
+  if (!hasBlueprintMarkdownStructuredSections(raw)) {
+    return { body };
+  }
+  const lines = raw.split(/\r?\n/);
+  const headerLine = lines.find((line) => line.trim().startsWith('@blueprint '));
+  const header = headerLine ? parseBlueprintDirective(headerLine) : undefined;
+  const nodes: BlueprintNode[] = [];
+  const edges: BlueprintDocument['edges'] = [];
+  const viewportBookmarks: NonNullable<BlueprintDocument['viewportBookmarks']> = [];
+  const portsByNodeId = new Map<string, BlueprintPort[]>();
+  let current: { kind: 'node'; value: BlueprintNode } | { kind: 'edge'; value: BlueprintDocument['edges'][number] } | undefined;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('@node ')) {
+      const attrs = parseBlueprintDirective(trimmed);
+      const node: BlueprintNode = {
+        id: attrs.id || makeId('bp-node'),
+        kind: isBlueprintNodeKind(attrs.kind) ? attrs.kind : 'note',
+        title: attrs.title || '未命名节点',
+        refKind: isBlueprintRefKind(attrs.refKind) ? attrs.refKind : undefined,
+        refId: attrs.refId || undefined,
+        refPath: attrs.refPath || undefined,
+        x: parseBlueprintNumber(attrs.x, 80 + nodes.length * 40),
+        y: parseBlueprintNumber(attrs.y, 80 + nodes.length * 40),
+        width: parseBlueprintNumber(attrs.width, 240),
+        height: parseBlueprintNumber(attrs.height, 112),
+        color: attrs.color || undefined,
+        tags: attrs.tags ? attrs.tags.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean) : undefined,
+        locked: attrs.locked === 'true',
+        collapsed: attrs.collapsed === 'true'
+      };
+      nodes.push(node);
+      portsByNodeId.set(node.id, []);
+      current = { kind: 'node', value: node };
+      continue;
+    }
+    if (trimmed.startsWith('@port ')) {
+      const attrs = parseBlueprintDirective(trimmed);
+      const nodeId = attrs.node || (current?.kind === 'node' ? current.value.id : '');
+      if (!nodeId) {
+        current = undefined;
+        continue;
+      }
+      const port = normalizeBlueprintPort({
+        id: attrs.id || attrs.name || makeId('bp-port'),
+        name: attrs.name || attrs.id || 'custom',
+        label: attrs.label || attrs.name || attrs.id || '端口',
+        direction: isBlueprintPortDirection(attrs.direction) ? attrs.direction : 'output',
+        kind: isBlueprintPortKind(attrs.kind) ? attrs.kind : 'custom',
+        color: attrs.color || undefined,
+        locked: attrs.locked === 'true'
+      });
+      portsByNodeId.set(nodeId, [...(portsByNodeId.get(nodeId) || []), port]);
+      continue;
+    }
+    if (trimmed.startsWith('@wire ') || trimmed.startsWith('@edge ')) {
+      const attrs = parseBlueprintDirective(trimmed);
+      const type = isBlueprintEdgeType(attrs.type || '') ? attrs.type as BlueprintEdgeType : 'custom';
+      const fromRef = trimmed.startsWith('@wire ') ? parseBlueprintPortRef(attrs.from) : { nodeId: attrs.from || '', portId: defaultOutputPortForEdge(type) };
+      const toRef = trimmed.startsWith('@wire ') ? parseBlueprintPortRef(attrs.to) : { nodeId: attrs.to || '', portId: defaultInputPortForEdge(type) };
+      if (!fromRef?.nodeId || !toRef?.nodeId) {
+        current = undefined;
+        continue;
+      }
+      const edge: BlueprintDocument['edges'][number] = {
+        id: attrs.id || makeId('bp-edge'),
+        fromNodeId: fromRef.nodeId,
+        toNodeId: toRef.nodeId,
+        fromPortId: fromRef.portId || defaultOutputPortForEdge(type),
+        toPortId: toRef.portId || defaultInputPortForEdge(type),
+        type,
+        label: attrs.label || '',
+        strength: isBlueprintEdgeStrength(attrs.strength || '') ? attrs.strength as BlueprintEdgeStrength : 'normal',
+        status: isBlueprintEdgeStatus(attrs.status || '') ? attrs.status as BlueprintEdgeStatus : 'draft',
+        createdAt: attrs.createdAt || undefined,
+        updatedAt: attrs.updatedAt || undefined
+      };
+      edges.push(edge);
+      current = { kind: 'edge', value: edge };
+      continue;
+    }
+    if (trimmed.startsWith('@view ')) {
+      const attrs = parseBlueprintDirective(trimmed);
+      viewportBookmarks.push({
+        id: attrs.id || makeId('bp-view'),
+        title: attrs.title || '未命名视角',
+        x: parseBlueprintNumber(attrs.x, 0),
+        y: parseBlueprintNumber(attrs.y, 0),
+        scale: parseBlueprintNumber(attrs.scale, 1),
+        createdAt: attrs.createdAt || nowIso()
+      });
+      current = undefined;
+      continue;
+    }
+    if (trimmed.startsWith('note:') && current) {
+      const note = trimmed.slice('note:'.length).trim();
+      if (current.kind === 'node') {
+        current.value.note = note;
+      } else {
+        current.value.note = note;
+      }
+    }
+  }
+  if (!nodes.length) {
+    return { body };
+  }
+  for (const node of nodes) {
+    node.ports = normalizeBlueprintPorts(portsByNodeId.get(node.id), node.id);
+  }
+  const timestamp = nowIso();
+  return {
+    body,
+    blueprint: {
+      schemaVersion: 1,
+      id: header?.id || makeId('blueprint'),
+      title: header?.title || extractBlueprintMarkdownTitle(raw) || '导入蓝图',
+      outlineId: header?.outlineId || undefined,
+      outlinePath: header?.outlinePath || undefined,
+      nodes,
+      edges,
+      viewportBookmarks,
+      createdAt: header?.createdAt || timestamp,
+      updatedAt: header?.updatedAt || timestamp
+    }
+  };
+}
+
+function hasBlueprintMarkdownStructuredSections(markdown: string): boolean {
+  return /^\s*@blueprint\s+/m.test(markdown) || /^\s*@node\s+/m.test(markdown) || /^\s*@port\s+/m.test(markdown) || /^\s*@wire\s+/m.test(markdown) || /^\s*@edge\s+/m.test(markdown);
+}
+
+function extractBlueprintMarkdownOutlineBody(markdown: string): string {
+  const raw = stripUtf8Bom(markdown);
+  const outlineMatch = /^##\s+大纲\s*$/m.exec(raw);
+  if (outlineMatch) {
+    const start = outlineMatch.index + outlineMatch[0].length;
+    const codeMatch = /^##\s+蓝图代码\s*$/m.exec(raw.slice(start));
+    return (codeMatch ? raw.slice(start, start + codeMatch.index) : raw.slice(start)).trim();
+  }
+  const firstDirective = /^\s*@(blueprint|node|port|wire|edge|view)\s+/m.exec(raw);
+  return (firstDirective ? raw.slice(0, firstDirective.index) : raw).trim();
+}
+
+function extractBlueprintMarkdownTitle(markdown: string): string | undefined {
+  const titleLine = markdown.split(/\r?\n/).find((line) => /^#\s+蓝图\s+/.test(line.trim()));
+  return titleLine?.replace(/^#\s+蓝图\s+/, '').trim() || undefined;
+}
+
+function blueprintMarkdownDirective(name: string, attrs: Record<string, string | number | boolean | undefined>): string {
+  const parts = [`@${name}`];
+  for (const [key, value] of Object.entries(attrs)) {
+    if (value === undefined || value === '') {
+      continue;
+    }
+    if (typeof value === 'boolean') {
+      parts.push(`${key}=${value ? 'true' : 'false'}`);
+      continue;
+    }
+    if (typeof value === 'number') {
+      parts.push(`${key}=${Number.isFinite(value) ? value : 0}`);
+      continue;
+    }
+    parts.push(`${key}=${JSON.stringify(value)}`);
+  }
+  return parts.join(' ');
+}
+
+function parseBlueprintDirective(line: string): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  const pattern = /([A-Za-z][A-Za-z0-9_-]*)=("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s]+)/g;
+  for (const match of line.matchAll(pattern)) {
+    const raw = match[2];
+    if (raw.startsWith('"')) {
+      try {
+        attrs[match[1]] = JSON.parse(raw) as string;
+      } catch {
+        attrs[match[1]] = raw.slice(1, -1);
+      }
+    } else if (raw.startsWith("'")) {
+      attrs[match[1]] = raw.slice(1, -1);
+    } else {
+      attrs[match[1]] = raw;
+    }
+  }
+  return attrs;
+}
+
+function parseBlueprintNumber(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseBlueprintPortRef(value: string | undefined): { nodeId: string; portId?: string } | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const [nodeId, ...portParts] = value.split('.');
+  if (!nodeId) {
+    return undefined;
+  }
+  return { nodeId, portId: portParts.join('.') || undefined };
+}
+
+function isBlueprintNodeKind(value: string | undefined): value is BlueprintNode['kind'] {
+  return value === 'outline' || value === 'codex' || value === 'scene' || value === 'beat' || value === 'note';
+}
+
+function isBlueprintRefKind(value: string | undefined): value is BlueprintRefKind {
+  return !!value && (
+    value === 'character' ||
+    value === 'location' ||
+    value === 'world-rule' ||
+    value === 'foreshadowing' ||
+    value === 'scene' ||
+    value === 'beat' ||
+    value === 'timeline-event' ||
+    value === 'outline' ||
+    value === 'outline-node'
+  );
+}
+
+function isBlueprintPortDirection(value: string | undefined): value is BlueprintPortDirection {
+  return value === 'input' || value === 'output';
+}
+
+function isBlueprintPortKind(value: string | undefined): value is BlueprintPortKind {
+  return value === 'exec' ||
+    value === 'reference' ||
+    value === 'cause' ||
+    value === 'conflict' ||
+    value === 'foreshadow' ||
+    value === 'resolve' ||
+    value === 'custom';
+}
+
+function defaultBlueprintPorts(): BlueprintPort[] {
+  return [
+    { id: 'in', name: 'in', label: '剧情输入', direction: 'input', kind: 'exec', color: '#9cdcfe', locked: true },
+    { id: 'usedBy', name: 'usedBy', label: '被引用', direction: 'input', kind: 'reference', color: '#4fc1ff', locked: true },
+    { id: 'affectedBy', name: 'affectedBy', label: '被影响', direction: 'input', kind: 'cause', color: '#dcdcaa', locked: true },
+    { id: 'conflictIn', name: 'conflictIn', label: '冲突输入', direction: 'input', kind: 'conflict', color: '#f48771', locked: true },
+    { id: 'foreshadowIn', name: 'foreshadowIn', label: '伏笔输入', direction: 'input', kind: 'foreshadow', color: '#c586c0', locked: true },
+    { id: 'resolveIn', name: 'resolveIn', label: '回收输入', direction: 'input', kind: 'resolve', color: '#6a9955', locked: true },
+    { id: 'out', name: 'out', label: '剧情输出', direction: 'output', kind: 'exec', color: '#9cdcfe', locked: true },
+    { id: 'uses', name: 'uses', label: '引用', direction: 'output', kind: 'reference', color: '#4fc1ff', locked: true },
+    { id: 'causes', name: 'causes', label: '导致', direction: 'output', kind: 'cause', color: '#dcdcaa', locked: true },
+    { id: 'conflicts', name: 'conflicts', label: '制造冲突', direction: 'output', kind: 'conflict', color: '#f48771', locked: true },
+    { id: 'foreshadows', name: 'foreshadows', label: '埋伏笔', direction: 'output', kind: 'foreshadow', color: '#c586c0', locked: true },
+    { id: 'resolves', name: 'resolves', label: '回收', direction: 'output', kind: 'resolve', color: '#6a9955', locked: true }
+  ];
+}
+
+function normalizeBlueprintPort(port: BlueprintPort): BlueprintPort {
+  return {
+    id: port.id?.trim() || makeId('bp-port'),
+    name: port.name?.trim() || port.id?.trim() || 'custom',
+    label: port.label?.trim() || port.name?.trim() || port.id?.trim() || '端口',
+    direction: isBlueprintPortDirection(port.direction) ? port.direction : 'output',
+    kind: isBlueprintPortKind(port.kind) ? port.kind : 'custom',
+    color: port.color?.trim() || undefined,
+    locked: port.locked === true
+  };
+}
+
+function normalizeBlueprintPorts(ports: BlueprintPort[] | undefined, _nodeId?: string): BlueprintPort[] {
+  const defaults = defaultBlueprintPorts();
+  const byId = new Map(defaults.map((port) => [port.id, port]));
+  for (const port of ports || []) {
+    const normalized = normalizeBlueprintPort(port);
+    const existing = byId.get(normalized.id);
+    byId.set(normalized.id, existing ? { ...existing, ...normalized, locked: existing.locked || normalized.locked } : normalized);
+  }
+  return [...byId.values()];
+}
+
+function defaultOutputPortForEdge(type: BlueprintEdgeType): string {
+  const ports: Record<BlueprintEdgeType, string> = {
+    flow: 'out',
+    uses: 'uses',
+    foreshadows: 'foreshadows',
+    resolves: 'resolves',
+    conflicts: 'conflicts',
+    supports: 'causes',
+    blocks: 'conflicts',
+    custom: 'out'
+  };
+  return ports[type];
+}
+
+function defaultInputPortForEdge(type: BlueprintEdgeType): string {
+  const ports: Record<BlueprintEdgeType, string> = {
+    flow: 'in',
+    uses: 'usedBy',
+    foreshadows: 'foreshadowIn',
+    resolves: 'resolveIn',
+    conflicts: 'conflictIn',
+    supports: 'affectedBy',
+    blocks: 'conflictIn',
+    custom: 'in'
+  };
+  return ports[type];
+}
+
+function blueprintFromOutlineDocument(outline: OutlineDocument): BlueprintDocument {
+  const timestamp = nowIso();
+  const nodes = outline.nodes.map((node, index): BlueprintNode => ({
+    id: node.id,
+    kind: node.type === 'scene' ? 'scene' : node.type === 'beat' ? 'beat' : 'outline',
+    title: node.title,
+    refKind: 'outline-node',
+    refId: `${outline.id}:${node.id}`,
+    refPath: posixPath(OUTLINES_DIR, `${outline.id}-${slugify(outline.title)}.json`),
+    x: 80 + (index % 4) * 280,
+    y: 80 + Math.floor(index / 4) * 160,
+    width: 240,
+    height: 112,
+    note: node.content || '',
+    color: blueprintColorForOutlineNode(node.type)
+  }));
+  const nodesByOutlineId = new Map(nodes.map((node) => [node.id, node]));
+  const edges = outline.nodes
+    .filter((node) => node.parentId && nodesByOutlineId.has(node.parentId))
+    .map((node) => ({
+      id: makeId('bp-edge'),
+      fromNodeId: node.parentId || '',
+      toNodeId: node.id,
+      type: 'flow' as BlueprintEdgeType,
+      label: '',
+      note: '',
+      strength: 'normal' as BlueprintEdgeStrength,
+      status: 'draft' as BlueprintEdgeStatus,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }));
+  return {
+    schemaVersion: 1,
+    id: makeId('blueprint'),
+    title: outline.title,
+    outlineId: outline.id,
+    outlinePath: posixPath(OUTLINES_DIR, `${outline.id}-${slugify(outline.title)}.json`),
+    nodes,
+    edges,
+    viewportBookmarks: [],
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+}
+
+function blueprintComparableSnapshot(blueprint: BlueprintDocument): unknown {
+  return {
+    title: blueprint.title,
+    outlineId: blueprint.outlineId || '',
+    nodes: blueprint.nodes.map((node) => ({
+      id: node.id,
+      kind: node.kind,
+      title: node.title,
+      refKind: node.refKind || '',
+      refId: node.refId || '',
+      refPath: node.refPath || '',
+      x: node.x,
+      y: node.y,
+      width: node.width,
+      height: node.height,
+      note: node.note || '',
+      color: node.color || '',
+      tags: node.tags || [],
+      locked: node.locked === true,
+      collapsed: node.collapsed === true,
+      ports: normalizeBlueprintPorts(node.ports, node.id).map((port) => ({
+        id: port.id,
+        name: port.name,
+        label: port.label,
+        direction: port.direction,
+        kind: port.kind,
+        color: port.color || '',
+        locked: port.locked === true
+      }))
+    })),
+    edges: blueprint.edges.map((edge) => ({
+      id: edge.id,
+      fromNodeId: edge.fromNodeId,
+      toNodeId: edge.toNodeId,
+      fromPortId: edge.fromPortId || defaultOutputPortForEdge(edge.type),
+      toPortId: edge.toPortId || defaultInputPortForEdge(edge.type),
+      type: edge.type,
+      label: edge.label || '',
+      note: edge.note || '',
+      strength: edge.strength || 'normal',
+      status: edge.status || 'draft'
+    })),
+    viewportBookmarks: blueprint.viewportBookmarks || []
+  };
+}
+
+function buildBlueprintMarkdownSyncItems(current: BlueprintDocument, markdown: BlueprintDocument): BlueprintMarkdownSyncItem[] {
+  const items: BlueprintMarkdownSyncItem[] = [];
+  addBlueprintMarkdownEntityItems(
+    items,
+    'node',
+    '节点',
+    current.nodes.map((node) => ({ id: node.id, label: node.title, value: {
+      kind: node.kind,
+      title: node.title,
+      note: node.note || '',
+      x: node.x,
+      y: node.y,
+      width: node.width,
+      height: node.height,
+      color: node.color || '',
+      tags: node.tags || [],
+      locked: node.locked === true,
+      collapsed: node.collapsed === true
+    } })),
+    markdown.nodes.map((node) => ({ id: node.id, label: node.title, value: {
+      kind: node.kind,
+      title: node.title,
+      note: node.note || '',
+      x: node.x,
+      y: node.y,
+      width: node.width,
+      height: node.height,
+      color: node.color || '',
+      tags: node.tags || [],
+      locked: node.locked === true,
+      collapsed: node.collapsed === true
+    } }))
+  );
+  addBlueprintMarkdownEntityItems(
+    items,
+    'port',
+    '端口',
+    current.nodes.flatMap((node) => normalizeBlueprintPorts(node.ports, node.id).map((port) => ({ id: `${node.id}.${port.id}`, label: `${node.title}.${port.label}`, value: port }))),
+    markdown.nodes.flatMap((node) => normalizeBlueprintPorts(node.ports, node.id).map((port) => ({ id: `${node.id}.${port.id}`, label: `${node.title}.${port.label}`, value: port })))
+  );
+  addBlueprintMarkdownEntityItems(
+    items,
+    'wire',
+    '连线',
+    current.edges.map((edge) => ({ id: edge.id, label: `${edge.fromNodeId}.${edge.fromPortId || defaultOutputPortForEdge(edge.type)} -> ${edge.toNodeId}.${edge.toPortId || defaultInputPortForEdge(edge.type)}`, value: {
+      fromNodeId: edge.fromNodeId,
+      toNodeId: edge.toNodeId,
+      fromPortId: edge.fromPortId || defaultOutputPortForEdge(edge.type),
+      toPortId: edge.toPortId || defaultInputPortForEdge(edge.type),
+      type: edge.type,
+      label: edge.label || '',
+      note: edge.note || '',
+      strength: edge.strength || 'normal',
+      status: edge.status || 'draft'
+    } })),
+    markdown.edges.map((edge) => ({ id: edge.id, label: `${edge.fromNodeId}.${edge.fromPortId || defaultOutputPortForEdge(edge.type)} -> ${edge.toNodeId}.${edge.toPortId || defaultInputPortForEdge(edge.type)}`, value: {
+      fromNodeId: edge.fromNodeId,
+      toNodeId: edge.toNodeId,
+      fromPortId: edge.fromPortId || defaultOutputPortForEdge(edge.type),
+      toPortId: edge.toPortId || defaultInputPortForEdge(edge.type),
+      type: edge.type,
+      label: edge.label || '',
+      note: edge.note || '',
+      strength: edge.strength || 'normal',
+      status: edge.status || 'draft'
+    } }))
+  );
+  addBlueprintMarkdownEntityItems(
+    items,
+    'view',
+    '视角',
+    (current.viewportBookmarks || []).map((view) => ({ id: view.id, label: view.title, value: view })),
+    (markdown.viewportBookmarks || []).map((view) => ({ id: view.id, label: view.title, value: view }))
+  );
+  if (!items.length) {
+    items.push({ id: 'blueprint', label: '蓝图内容', status: 'unchanged', detail: 'Markdown 与蓝图一致。', defaultAction: 'skip' });
+  }
+  return items;
+}
+
+function addBlueprintMarkdownEntityItems(
+  items: BlueprintMarkdownSyncItem[],
+  prefix: string,
+  label: string,
+  current: Array<{ id: string; label: string; value: unknown }>,
+  markdown: Array<{ id: string; label: string; value: unknown }>
+): void {
+  const currentById = new Map(current.map((item) => [item.id, item]));
+  const markdownById = new Map(markdown.map((item) => [item.id, item]));
+  const ids = new Set([...currentById.keys(), ...markdownById.keys()]);
+  for (const id of [...ids].sort()) {
+    const left = currentById.get(id);
+    const right = markdownById.get(id);
+    if (!left && right) {
+      items.push({ id: `${prefix}:${id}`, label: `${label}：${right.label}`, status: 'pull', detail: 'Markdown 中存在，当前蓝图中缺失。', defaultAction: 'pull' });
+      continue;
+    }
+    if (left && !right) {
+      items.push({ id: `${prefix}:${id}`, label: `${label}：${left.label}`, status: 'push', detail: '当前蓝图中存在，Markdown 中缺失。', defaultAction: 'push' });
+      continue;
+    }
+    if (left && right) {
+      const same = JSON.stringify(left.value) === JSON.stringify(right.value);
+      items.push({
+        id: `${prefix}:${id}`,
+        label: `${label}：${left.label}`,
+        status: same ? 'unchanged' : 'conflict',
+        detail: same ? `${label}一致。` : `${label}在 Markdown 与当前蓝图中不一致。`,
+        defaultAction: same ? 'skip' : 'skip'
+      });
+    }
+  }
+}
+
+function mergeBlueprintMarkdownDecisionItems(target: BlueprintDocument, source: BlueprintDocument, itemIds: string[]): BlueprintDocument {
+  let merged: BlueprintDocument = {
+    ...target,
+    nodes: target.nodes.map((node) => ({ ...node, ports: normalizeBlueprintPorts(node.ports, node.id).map((port) => ({ ...port })) })),
+    edges: target.edges.map((edge) => ({ ...edge })),
+    viewportBookmarks: (target.viewportBookmarks || []).map((view) => ({ ...view }))
+  };
+  for (const itemId of itemIds) {
+    const [kind, ...idParts] = itemId.split(':');
+    const id = idParts.join(':');
+    if (!id) {
+      continue;
+    }
+    if (kind === 'node') {
+      const sourceNode = source.nodes.find((node) => node.id === id);
+      if (sourceNode) {
+        merged = {
+          ...merged,
+          nodes: upsertById(merged.nodes, { ...sourceNode, ports: normalizeBlueprintPorts(sourceNode.ports, sourceNode.id).map((port) => ({ ...port })) })
+        };
+      } else {
+        merged = { ...merged, nodes: merged.nodes.filter((node) => node.id !== id), edges: merged.edges.filter((edge) => edge.fromNodeId !== id && edge.toNodeId !== id) };
+      }
+      continue;
+    }
+    if (kind === 'port') {
+      const [nodeId, ...portParts] = id.split('.');
+      const portId = portParts.join('.');
+      const sourceNode = source.nodes.find((node) => node.id === nodeId);
+      const sourcePort = sourceNode ? normalizeBlueprintPorts(sourceNode.ports, sourceNode.id).find((port) => port.id === portId) : undefined;
+      merged = {
+        ...merged,
+        nodes: merged.nodes.map((node) => {
+          if (node.id !== nodeId) {
+            return node;
+          }
+          const ports = normalizeBlueprintPorts(node.ports, node.id);
+          return sourcePort
+            ? { ...node, ports: upsertById(ports, { ...sourcePort }) }
+            : { ...node, ports: ports.filter((port) => port.id !== portId) };
+        }),
+        edges: sourcePort ? merged.edges : merged.edges.filter((edge) => !(edge.fromNodeId === nodeId && edge.fromPortId === portId) && !(edge.toNodeId === nodeId && edge.toPortId === portId))
+      };
+      continue;
+    }
+    if (kind === 'wire') {
+      const sourceEdge = source.edges.find((edge) => edge.id === id);
+      merged = sourceEdge
+        ? { ...merged, edges: upsertById(merged.edges, { ...sourceEdge }) }
+        : { ...merged, edges: merged.edges.filter((edge) => edge.id !== id) };
+      continue;
+    }
+    if (kind === 'view') {
+      const sourceView = (source.viewportBookmarks || []).find((view) => view.id === id);
+      merged = sourceView
+        ? { ...merged, viewportBookmarks: upsertById(merged.viewportBookmarks || [], { ...sourceView }) }
+        : { ...merged, viewportBookmarks: (merged.viewportBookmarks || []).filter((view) => view.id !== id) };
+    }
+  }
+  return merged;
+}
+
+function upsertById<T extends { id: string }>(items: T[], item: T): T[] {
+  const index = items.findIndex((candidate) => candidate.id === item.id);
+  if (index === -1) {
+    return [...items, item];
+  }
+  return items.map((candidate, itemIndex) => itemIndex === index ? item : candidate);
+}
+
+function summarizeBlueprintMarkdownSyncItems(items: BlueprintMarkdownSyncItem[]): Record<BlueprintMarkdownSyncStatus, number> {
+  return items.reduce<Record<BlueprintMarkdownSyncStatus, number>>(
+    (summary, item) => {
+      summary[item.status] += 1;
+      return summary;
+    },
+    { pull: 0, push: 0, conflict: 0, missing: 0, unchanged: 0 }
+  );
+}
+
 function projectBlueprintNodesToOutlineNodes(blueprint: BlueprintDocument): OutlineNode[] {
   const orderedNodes = [...blueprint.nodes]
     .sort((left, right) => left.y - right.y || left.x - right.x || left.title.localeCompare(right.title, 'zh-Hans-CN'));
@@ -5251,28 +6356,72 @@ function summarizeBlueprintSyncItems(items: BlueprintSyncItem[]): Record<Bluepri
 }
 
 function normalizeBlueprintNode(node: BlueprintNode): BlueprintNode {
+  const normalizedId = node.id || makeId('bp-node');
   return {
     ...node,
-    id: node.id || makeId('bp-node'),
+    id: normalizedId,
     kind: node.kind || 'note',
     title: node.title?.trim() || '未命名节点',
     x: Number.isFinite(node.x) ? node.x : 80,
     y: Number.isFinite(node.y) ? node.y : 80,
     width: Number.isFinite(node.width) && node.width > 80 ? node.width : 220,
-    height: Number.isFinite(node.height) && node.height > 60 ? node.height : 104
+    height: Number.isFinite(node.height) && node.height > 60 ? node.height : 104,
+    tags: Array.isArray(node.tags) ? node.tags.filter((tag): tag is string => typeof tag === 'string' && tag.trim().length > 0).map((tag) => tag.trim()) : [],
+    locked: node.locked === true,
+    collapsed: node.collapsed === true,
+    ports: normalizeBlueprintPorts(node.ports, normalizedId)
+  };
+}
+
+function normalizeBlueprintDocumentForRead(document: BlueprintDocument): BlueprintDocument {
+  return {
+    ...document,
+    schemaVersion: 1,
+    nodes: Array.isArray(document.nodes) ? document.nodes.map(normalizeBlueprintNode) : [],
+    edges: Array.isArray(document.edges) ? document.edges.map(normalizeBlueprintEdge) : [],
+    viewportBookmarks: Array.isArray(document.viewportBookmarks) ? document.viewportBookmarks.map(normalizeBlueprintViewportBookmark) : []
   };
 }
 
 function normalizeBlueprintEdge(edge: BlueprintDocument['edges'][number]): BlueprintDocument['edges'][number] {
+  const timestamp = nowIso();
+  const type = isBlueprintEdgeType(edge.type) ? edge.type : 'custom';
   return {
     ...edge,
     id: edge.id || makeId('bp-edge'),
-    type: isBlueprintEdgeType(edge.type) ? edge.type : 'custom'
+    type,
+    fromPortId: edge.fromPortId || defaultOutputPortForEdge(type),
+    toPortId: edge.toPortId || defaultInputPortForEdge(type),
+    label: edge.label ?? '',
+    note: edge.note ?? '',
+    strength: isBlueprintEdgeStrength(edge.strength) ? edge.strength : 'normal',
+    status: isBlueprintEdgeStatus(edge.status) ? edge.status : 'draft',
+    createdAt: edge.createdAt || timestamp,
+    updatedAt: edge.updatedAt || timestamp
+  };
+}
+
+function normalizeBlueprintViewportBookmark(bookmark: NonNullable<BlueprintDocument['viewportBookmarks']>[number]): NonNullable<BlueprintDocument['viewportBookmarks']>[number] {
+  return {
+    id: bookmark.id || makeId('bp-view'),
+    title: bookmark.title?.trim() || '未命名视角',
+    x: Number.isFinite(bookmark.x) ? bookmark.x : 0,
+    y: Number.isFinite(bookmark.y) ? bookmark.y : 0,
+    scale: Number.isFinite(bookmark.scale) && bookmark.scale > 0 ? Math.max(.35, Math.min(2.2, bookmark.scale)) : 1,
+    createdAt: bookmark.createdAt || nowIso()
   };
 }
 
 function isBlueprintEdgeType(value: string): value is BlueprintDocument['edges'][number]['type'] {
   return ['flow', 'uses', 'foreshadows', 'resolves', 'conflicts', 'supports', 'blocks', 'custom'].includes(value);
+}
+
+function isBlueprintEdgeStrength(value: unknown): value is BlueprintEdgeStrength {
+  return value === 'weak' || value === 'normal' || value === 'strong';
+}
+
+function isBlueprintEdgeStatus(value: unknown): value is BlueprintEdgeStatus {
+  return value === 'draft' || value === 'confirmed' || value === 'deprecated';
 }
 
 function blueprintColorForOutlineNode(type: OutlineNode['type']): string {

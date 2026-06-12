@@ -17,6 +17,7 @@ LoreDock 是一个本地优先的 VS Code 长篇小说结构工作台。它把�
 - 支持将整本书按卷章顺序导出为 Markdown、TXT、DOCX、EPUB 或 PDF，并通过导出样式文件控制标题、作者、卷标题、字号和行距等。
 - 支持资料库 ZIP 导入导出，方便备份或迁移。
 - 支持本地确定性一致性检查，先抓隐藏真相提前出现、人物状态复核、绝对规则疑似违反和时间线多地点冲突等问题。
+- 蓝图 Markdown 采用“可读大纲 + 明文蓝图代码”格式，使用 `@blueprint`、`@node`、`@port`、`@wire`、`@view` 等符号关键字还原脑图；AI/agent 维护规则见 `AGENTS.md`。
 
 ## 本地项目结构
 
@@ -29,6 +30,7 @@ LoreDock 是一个本地优先的 VS Code 长篇小说结构工作台。它把�
   export-style.jsonc
   goals.json
   summaries/
+  blueprints-md/
   pending-updates/
 manuscript/
   volume-001/

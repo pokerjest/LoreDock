@@ -80,6 +80,10 @@ export interface OutlineImportResult {
 export type BlueprintNodeKind = 'outline' | 'codex' | 'scene' | 'beat' | 'note';
 export type BlueprintRefKind = CodexCard['kind'] | 'timeline-event' | 'outline' | 'outline-node';
 export type BlueprintEdgeType = 'flow' | 'uses' | 'foreshadows' | 'resolves' | 'conflicts' | 'supports' | 'blocks' | 'custom';
+export type BlueprintEdgeStrength = 'weak' | 'normal' | 'strong';
+export type BlueprintEdgeStatus = 'draft' | 'confirmed' | 'deprecated';
+export type BlueprintPortDirection = 'input' | 'output';
+export type BlueprintPortKind = 'exec' | 'reference' | 'cause' | 'conflict' | 'foreshadow' | 'resolve' | 'custom';
 export type BlueprintSyncStatus = 'pull' | 'push' | 'conflict' | 'missing' | 'unchanged';
 export type BlueprintSyncAction = 'pull' | 'push' | 'delete-source' | 'skip';
 export type BlueprintNodeSourceStatus = 'local' | 'linked' | 'missing' | 'stale' | 'conflict';
@@ -89,6 +93,16 @@ export interface BlueprintSyncSnapshot {
   note: string;
   syncedAt: string;
   sourceUpdatedAt?: string;
+}
+
+export interface BlueprintPort {
+  id: string;
+  name: string;
+  label: string;
+  direction: BlueprintPortDirection;
+  kind: BlueprintPortKind;
+  color?: string;
+  locked?: boolean;
 }
 
 export interface BlueprintNode {
@@ -104,6 +118,10 @@ export interface BlueprintNode {
   height: number;
   note?: string;
   color?: string;
+  tags?: string[];
+  locked?: boolean;
+  collapsed?: boolean;
+  ports?: BlueprintPort[];
   lastSynced?: BlueprintSyncSnapshot;
 }
 
@@ -111,8 +129,24 @@ export interface BlueprintEdge {
   id: string;
   fromNodeId: string;
   toNodeId: string;
+  fromPortId?: string;
+  toPortId?: string;
   type: BlueprintEdgeType;
   label?: string;
+  note?: string;
+  strength?: BlueprintEdgeStrength;
+  status?: BlueprintEdgeStatus;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface BlueprintViewportBookmark {
+  id: string;
+  title: string;
+  x: number;
+  y: number;
+  scale: number;
+  createdAt: string;
 }
 
 export interface BlueprintDocument {
@@ -123,6 +157,7 @@ export interface BlueprintDocument {
   outlinePath?: string;
   nodes: BlueprintNode[];
   edges: BlueprintEdge[];
+  viewportBookmarks?: BlueprintViewportBookmark[];
   createdAt: string;
   updatedAt: string;
 }
@@ -143,6 +178,7 @@ export interface BlueprintPanelState {
   edgeSemanticIssues: BlueprintEdgeSemanticIssue[];
   syncPreview?: BlueprintSyncPreview;
   syncResult?: BlueprintSyncResult;
+  markdownSyncPreview?: BlueprintMarkdownSyncPreview;
 }
 
 export interface BlueprintNodeSemanticSummary {
@@ -206,6 +242,26 @@ export interface BlueprintSyncResult {
   pulled: number;
   pushed: number;
   deletedSources?: number;
+}
+
+export type BlueprintMarkdownSyncStatus = 'pull' | 'push' | 'conflict' | 'missing' | 'unchanged';
+export type BlueprintMarkdownSyncAction = 'pull' | 'push' | 'skip';
+
+export interface BlueprintMarkdownSyncItem {
+  id: string;
+  label: string;
+  status: BlueprintMarkdownSyncStatus;
+  detail: string;
+  defaultAction: BlueprintMarkdownSyncAction;
+}
+
+export interface BlueprintMarkdownSyncPreview {
+  schemaVersion: 1;
+  blueprintId: string;
+  markdownPath: string;
+  generatedAt: string;
+  items: BlueprintMarkdownSyncItem[];
+  summary: Record<BlueprintMarkdownSyncStatus, number>;
 }
 
 export interface CharacterRelationship {

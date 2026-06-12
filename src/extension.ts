@@ -117,9 +117,14 @@ export function activate(context: vscode.ExtensionContext): void {
     registerCommand('loredock.createBeat', () => createBeat(getStorage, codexTree)),
     registerCommand('loredock.openPlanView', () => openPlanView(context, getStorage)),
     registerCommand('loredock.openBlueprintOutline', () => openBlueprintOutline(context, getStorage, manuscriptTree, codexTree, outlineTree)),
+    registerCommand('loredock.exportBlueprintMarkdown', () => exportBlueprintMarkdown(getStorage)),
+    registerCommand('loredock.importBlueprintMarkdown', () => importBlueprintMarkdown(getStorage, outlineTree)),
+    registerCommand('loredock.previewBlueprintMarkdownSync', () => previewBlueprintMarkdownSync(context, getStorage, manuscriptTree, codexTree, outlineTree)),
     registerCommand('loredock.openTimelineWorkbench', () => openTimelineWorkbench(context, getStorage)),
     registerCommand('loredock.openBlueprintForOutline', (node?: unknown) => openBlueprintForOutline(context, getStorage, node, manuscriptTree, codexTree, outlineTree)),
     registerCommand('loredock.openOutlineSource', (node?: unknown) => openOutlineSource(getStorage, node)),
+    registerCommand('loredock.renameOutline', (node?: unknown) => renameOutline(getStorage, outlineTree, node)),
+    registerCommand('loredock.deleteOutline', (node?: unknown) => deleteOutline(getStorage, outlineTree, node)),
     registerCommand('loredock.importOutlineToPlan', () => importOutlineToPlan(getStorage, manuscriptTree, codexTree)),
     registerCommand('loredock.rebuildReferenceIndex', () => rebuildReferenceIndex(getStorage)),
     registerCommand('loredock.showReferenceIndex', () => showReferenceIndex(getStorage)),
@@ -512,6 +517,24 @@ async function openBlueprintOutline(
       const blueprint = await storage.autoLayoutBlueprint(action.blueprintId);
       return rememberBlueprint(storage.getBlueprintPanelState(blueprint.id));
     }
+    if (action.command === 'create-edges') {
+      const blueprint = await storage.createBlueprintEdges(action.blueprintId, action.pairs, {
+        type: action.edgeType,
+        label: action.label,
+        note: action.note,
+        strength: action.strength,
+        status: action.status
+      });
+      return rememberBlueprint(storage.getBlueprintPanelState(blueprint.id));
+    }
+    if (action.command === 'reverse-edges') {
+      const blueprint = await storage.reverseBlueprintEdges(action.blueprintId, action.edgeIds);
+      return rememberBlueprint(storage.getBlueprintPanelState(blueprint.id));
+    }
+    if (action.command === 'update-edges') {
+      const blueprint = await storage.updateBlueprintEdges(action.blueprintId, action.edgeIds, action.patch);
+      return rememberBlueprint(storage.getBlueprintPanelState(blueprint.id));
+    }
     if (action.command === 'preview-sync') {
       return rememberBlueprint(withBlueprintSyncPreview(storage, action.blueprintId));
     }
@@ -539,6 +562,30 @@ async function openBlueprintOutline(
         pushed: action.decisions.filter((decision) => decision.action === 'push').length,
         deletedSources: deleting
       }));
+    }
+    if (action.command === 'export-markdown') {
+      const relativePath = await storage.exportBlueprintToMarkdown(action.blueprintId);
+      vscode.window.showInformationMessage(`蓝图 Markdown 已导出：${relativePath}`);
+      return rememberBlueprint(storage.getBlueprintPanelState(action.blueprintId));
+    }
+    if (action.command === 'import-markdown') {
+      const markdown = await readMarkdownInputForBlueprint();
+      if (!markdown.trim()) {
+        vscode.window.showInformationMessage('请先打开、选中或复制蓝图 Markdown。');
+        return rememberBlueprint(storage.getBlueprintPanelState(action.blueprintId || activeBlueprintId));
+      }
+      const blueprint = await storage.importBlueprintFromMarkdown(markdown, '导入蓝图');
+      activeBlueprintId = blueprint.id;
+      outlineTree?.refresh();
+      return rememberBlueprint(storage.getBlueprintPanelState(blueprint.id));
+    }
+    if (action.command === 'preview-markdown-sync') {
+      return rememberBlueprint(withBlueprintMarkdownSyncPreview(storage, action.blueprintId));
+    }
+    if (action.command === 'apply-markdown-sync') {
+      const blueprint = await storage.applyBlueprintMarkdownSync(action.blueprintId, action.markdownPath, action.decisions);
+      outlineTree?.refresh();
+      return rememberBlueprint(withBlueprintMarkdownSyncPreview(storage, blueprint.id));
     }
     if (action.command === 'open-source') {
       await openHealthSource(storage, action.source);
@@ -589,6 +636,40 @@ async function openOutlineSource(getStorage: () => LoreDockStorage | undefined, 
   }
 }
 
+async function renameOutline(getStorage: () => LoreDockStorage | undefined, outlineTree: OutlineTreeProvider, node?: unknown): Promise<void> {
+  const storage = requireStorage(getStorage);
+  await storage.requireManifest();
+  if (!isOutlineDocumentNode(node)) {
+    return;
+  }
+  const title = await promptInput('新的大纲标题', node.outline.title);
+  if (!title || title.trim() === node.outline.title) {
+    return;
+  }
+  await storage.renameOutline(node.outline.id, title);
+  outlineTree.refresh();
+  refreshActiveBlueprintPanel();
+}
+
+async function deleteOutline(getStorage: () => LoreDockStorage | undefined, outlineTree: OutlineTreeProvider, node?: unknown): Promise<void> {
+  const storage = requireStorage(getStorage);
+  await storage.requireManifest();
+  if (!isOutlineDocumentNode(node)) {
+    return;
+  }
+  const choice = await vscode.window.showWarningMessage(
+    `确定删除大纲「${node.outline.title}」吗？这会删除大纲文件，并从所有蓝图移除引用它的节点和连线。`,
+    { modal: true },
+    '删除'
+  );
+  if (choice !== '删除') {
+    return;
+  }
+  await storage.deleteOutlineAndBlueprintReferences(node.outline.id);
+  outlineTree.refresh();
+  refreshActiveBlueprintPanel();
+}
+
 async function withBlueprintSyncPreview(
   storage: LoreDockStorage,
   blueprintId: string,
@@ -600,6 +681,63 @@ async function withBlueprintSyncPreview(
     syncPreview: await storage.previewBlueprintSync(state.current.id),
     syncResult
   };
+}
+
+async function withBlueprintMarkdownSyncPreview(
+  storage: LoreDockStorage,
+  blueprintId: string
+): Promise<Awaited<ReturnType<LoreDockStorage['getBlueprintPanelState']>>> {
+  const state = await storage.getBlueprintPanelState(blueprintId);
+  return {
+    ...state,
+    markdownSyncPreview: await storage.previewBlueprintMarkdownSync(state.current.id)
+  };
+}
+
+async function readMarkdownInputForBlueprint(): Promise<string> {
+  const editor = vscode.window.activeTextEditor;
+  if (editor && !editor.selection.isEmpty) {
+    return editor.document.getText(editor.selection);
+  }
+  if (editor && (editor.document.languageId === 'markdown' || editor.document.fileName.endsWith('.md'))) {
+    return editor.document.getText();
+  }
+  return vscode.env.clipboard.readText();
+}
+
+async function exportBlueprintMarkdown(getStorage: () => LoreDockStorage | undefined): Promise<void> {
+  const storage = requireStorage(getStorage);
+  const blueprintId = activeBlueprintId || (await storage.getBlueprintPanelState()).current.id;
+  const relativePath = await storage.exportBlueprintToMarkdown(blueprintId);
+  vscode.window.showInformationMessage(`蓝图 Markdown 已导出：${relativePath}`);
+}
+
+async function importBlueprintMarkdown(getStorage: () => LoreDockStorage | undefined, outlineTree?: OutlineTreeProvider): Promise<void> {
+  const storage = requireStorage(getStorage);
+  const markdown = await readMarkdownInputForBlueprint();
+  if (!markdown.trim()) {
+    vscode.window.showInformationMessage('请先打开、选中或复制蓝图 Markdown。');
+    return;
+  }
+  const blueprint = await storage.importBlueprintFromMarkdown(markdown, '导入蓝图');
+  activeBlueprintId = blueprint.id;
+  outlineTree?.refresh();
+  refreshActiveBlueprintPanel();
+  vscode.window.showInformationMessage(`已导入蓝图 Markdown：${blueprint.title}`);
+}
+
+async function previewBlueprintMarkdownSync(
+  context: vscode.ExtensionContext,
+  getStorage: () => LoreDockStorage | undefined,
+  manuscriptTree?: ManuscriptTreeProvider,
+  codexTree?: CodexTreeProvider,
+  outlineTree?: OutlineTreeProvider
+): Promise<void> {
+  const storage = requireStorage(getStorage);
+  activeBlueprintId = activeBlueprintId || (await storage.getBlueprintPanelState()).current.id;
+  await openBlueprintOutline(context, getStorage, manuscriptTree, codexTree, outlineTree);
+  const state = await withBlueprintMarkdownSyncPreview(storage, activeBlueprintId);
+  activeBlueprintPanel?.refresh(state);
 }
 
 async function addBlueprintResource(

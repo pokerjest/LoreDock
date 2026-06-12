@@ -36,7 +36,12 @@
     "onCommand:loredock.openBlueprintOutline",
     "onCommand:loredock.openTimelineWorkbench",
     "onCommand:loredock.openBlueprintForOutline",
+    "onCommand:loredock.exportBlueprintMarkdown",
+    "onCommand:loredock.importBlueprintMarkdown",
+    "onCommand:loredock.previewBlueprintMarkdownSync",
     "onCommand:loredock.openOutlineSource",
+    "onCommand:loredock.renameOutline",
+    "onCommand:loredock.deleteOutline",
     "onCommand:loredock.importOutlineToPlan",
     "onCommand:loredock.rebuildReferenceIndex",
     "onCommand:loredock.showReferenceIndex",
@@ -236,8 +241,28 @@
         "title": "LoreDock: 打开此大纲蓝图"
       },
       {
+        "command": "loredock.exportBlueprintMarkdown",
+        "title": "LoreDock: 导出蓝图 Markdown"
+      },
+      {
+        "command": "loredock.importBlueprintMarkdown",
+        "title": "LoreDock: 导入蓝图 Markdown"
+      },
+      {
+        "command": "loredock.previewBlueprintMarkdownSync",
+        "title": "LoreDock: 预览蓝图 Markdown 同步"
+      },
+      {
         "command": "loredock.openOutlineSource",
         "title": "LoreDock: 打开大纲源文件"
+      },
+      {
+        "command": "loredock.renameOutline",
+        "title": "LoreDock: 重命名大纲"
+      },
+      {
+        "command": "loredock.deleteOutline",
+        "title": "LoreDock: 删除大纲"
       },
       {
         "command": "loredock.importOutlineToPlan",
@@ -345,19 +370,9 @@
           "group": "navigation@2"
         },
         {
-          "command": "loredock.openBlueprintOutline",
-          "when": "view == loredock.outlines",
-          "group": "navigation@1"
-        },
-        {
-          "command": "loredock.importOutlineToPlan",
-          "when": "view == loredock.outlines",
-          "group": "navigation@2"
-        },
-        {
           "command": "loredock.refreshViews",
           "when": "view == loredock.outlines",
-          "group": "navigation@3"
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [
@@ -415,6 +430,16 @@
           "command": "loredock.openOutlineSource",
           "when": "view == loredock.outlines && viewItem == loredock.outline",
           "group": "2_open@1"
+        },
+        {
+          "command": "loredock.renameOutline",
+          "when": "view == loredock.outlines && viewItem == loredock.outline",
+          "group": "2_edit@1"
+        },
+        {
+          "command": "loredock.deleteOutline",
+          "when": "view == loredock.outlines && viewItem == loredock.outline",
+          "group": "4_delete@1"
         },
         {
           "command": "loredock.openCodexEntry",
@@ -621,7 +646,27 @@
           "when": "false"
         },
         {
+          "command": "loredock.exportBlueprintMarkdown",
+          "when": "false"
+        },
+        {
+          "command": "loredock.importBlueprintMarkdown",
+          "when": "false"
+        },
+        {
+          "command": "loredock.previewBlueprintMarkdownSync",
+          "when": "false"
+        },
+        {
           "command": "loredock.openOutlineSource",
+          "when": "false"
+        },
+        {
+          "command": "loredock.renameOutline",
+          "when": "false"
+        },
+        {
+          "command": "loredock.deleteOutline",
           "when": "false"
         },
         {
