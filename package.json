@@ -1,0 +1,67 @@
+{
+  "name": "loredock",
+  "displayName": "LoreDock",
+  "description": "Local-first story project system for VS Code.",
+  "version": "0.0.0",
+  "publisher": "loredock",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20.0.0",
+    "vscode": "^1.92.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "workspaceContains:.loredock/project.json",
+    "onCommand:loredock.initProject",
+    "onCommand:loredock.openProjectManifest",
+    "onCommand:loredock.showDiagnostics",
+    "onCommand:loredock.repairProjectManifest"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "loredock.initProject",
+        "title": "LoreDock: Initialize Project"
+      },
+      {
+        "command": "loredock.openProjectManifest",
+        "title": "LoreDock: Open Project Manifest"
+      },
+      {
+        "command": "loredock.showDiagnostics",
+        "title": "LoreDock: Show Diagnostics"
+      },
+      {
+        "command": "loredock.repairProjectManifest",
+        "title": "LoreDock: Repair Project Manifest"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "pretest": "npm run compile",
+    "test": "vscode-test"
+  },
+  "overrides": {
+    "mocha": {
+      "diff": "^8.0.2",
+      "serialize-javascript": "^7.0.6"
+    }
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^20.14.12",
+    "@types/vscode": "^1.92.0",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "@vscode/test-cli": "^0.0.11",
+    "@vscode/test-electron": "^2.4.1",
+    "eslint": "^8.57.0",
+    "typescript": "^5.5.4"
+  }
+}
