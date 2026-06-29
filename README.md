@@ -1,63 +1,55 @@
 # LoreDock
 
-LoreDock is a local-first story project system for VS Code.
+LoreDock 是一个运行在 VS Code 里的本地优先故事项目系统，面向长篇小说和复杂世界观项目。
 
-Current package version: **0.0.0**.
+当前插件版本：**0.1.0**。
 
-Current milestone: **v0.1 Manuscript Core on the v0.0 Project Kernel**.
+当前里程碑：**v0.1 Manuscript Core**，建立在 **v0.0 Project Kernel** 之上。
 
-LoreDock is being rebuilt as a transparent, local-first writing system for long-form fiction. The current implementation includes the project kernel plus the first usable manuscript capability: project discovery, manifest lifecycle, safe writes, diagnostics, schema registration, capability routing, and a manuscript tree for books, volumes, chapters, notes, and basic progress statistics.
+这一版已经不只是扩展脚手架：项目内核已经能管理 LoreDock 项目的初始化、清单、诊断、安全写入和 capability 生命周期；手稿能力也已经接入，可以在 VS Code 侧边栏中管理书籍、卷、章节、笔记、章节状态、目标字数、基础统计和回收站。
 
-## Current Status
+## 当前实现
 
-`0.0.0` now carries the v0.0 foundation and the in-development v0.1 manuscript core.
+### 项目内核
 
-- VS Code extension and TypeScript project scaffold.
-- Fixed workspace-folder project root for v0.0.
-- `.loredock/project.json` manifest lifecycle with `schemaVersion: "0.0.0"`.
-- Project initialization through a preview/apply operation plan.
-- Manifest validation with degraded mode for invalid JSON, bad fields, unsupported versions, and invalid capabilities.
-- Explicit manifest repair command that backs up the current manifest before writing a rebuilt v0.0 manifest.
-- In-memory diagnostics printed through the LoreDock OutputChannel.
-- Workspace-relative safe file writes through `SafeFileWriter`.
-- Path checks for absolute paths, `..` traversal, undeclared files/directories, and symlink escapes.
-- Schema registry and no-op migration runner foundations.
-- Capability API for commands, tree views, file watchers, schemas, diagnostics, and disposable lifecycle.
-- Multi-root workspace routing through explicit folder selection.
-- Example empty capability used to prove capability activation and command routing.
-- Manuscript capability activation through `manuscript.core`.
-- Chinese localized Manuscript tree view in the LoreDock activity bar.
-- Manuscript structure management for books, volumes, chapters, per-book AI agent guides, notes, status, target word count, moves, and statistics.
-- Per-book `agent.md` guides split read-only system rules from user-editable custom rules so AI plugins can follow LoreDock structure while preserving each book's collaboration preferences.
-- Manuscript manifest validation for broken references, invalid paths, missing files, orphan Markdown files, duplicate paths, and symlink escapes.
-- Manuscript recycle bin: deleting books, volumes, or chapters first moves them to `.loredock/trash/manuscript/`; recycle-bin items can be restored or permanently removed recursively.
+- VS Code Extension + TypeScript 工程结构。
+- 以 workspace folder 作为 v0.x 阶段固定项目根目录。
+- `.loredock/project.json` 项目清单生命周期，项目清单 schema 当前为 `0.0.0`。
+- `LoreDock: Initialize Project` 使用 preview/apply operation plan 初始化项目。
+- manifest validation 支持字段类型检查、JSON 损坏检查、未知版本检查、capability 检查和 degraded mode。
+- `LoreDock: Repair Project Manifest` 会先备份损坏清单，再重建最小 v0.0 清单。
+- 诊断信息保存在内存中，并输出到 LoreDock OutputChannel。
+- `SafeFileWriter` 统一处理 workspace-relative 写入、同目录临时文件和 rename 替换。
+- 路径安全检查覆盖绝对路径、`..` 逃逸、未声明文件/目录、父级 symlink 逃逸和目标 symlink 逃逸。
+- SchemaRegistry 和 MigrationRunner 已有基础结构；v0.0 项目清单只跑 no-op migration。
+- Capability API 支持命令、视图、文件监听、schema、诊断、服务注册和可释放生命周期。
+- multi-root workspace 中通过显式 folder 选择路由命令。
 
-The kernel remains independent from manuscript internals. Story bible, outline, timeline, assistant, compile, and export concepts are still later capabilities.
+### 手稿能力
 
-## Project Files
+- `manuscript.core` capability 已接入项目清单。
+- LoreDock activity bar 中提供中文“手稿”树视图。
+- 支持启用手稿，并创建 `manuscript/manifest.json`、`notes.md`、初始书籍、卷、章节和每本书的 `agent.md`。
+- 支持新建、重命名、删除书籍/卷/章节。
+- 支持章节跨卷移动、卷内排序、上移和下移。
+- 支持章节状态：`idea`、`outline`、`draft`、`revise`、`done`、`archived`。
+- 支持章节目标字数和基础字数统计。
+- 每本书生成 `agent.md`，把只读系统规则和用户可编辑协作规则分区，方便后续 AI 插件读取。
+- 手稿清单 schema 当前为 `0.1.0`。
+- 手稿诊断覆盖损坏引用、非法路径、缺失文件、孤立 Markdown、重复路径和 symlink 逃逸。
+- 删除书籍、卷或章节时先移入 `.loredock/trash/manuscript/`，支持还原和永久删除。
+- 内核不依赖手稿实现细节，手稿通过 Capability API 挂载。
 
-Project initialization creates only:
+## 项目文件
+
+初始化 LoreDock 项目只会创建：
 
 ```text
 .loredock/
   project.json
 ```
 
-Enabling Manuscript adds:
-
-```text
-manuscript/
-  manifest.json
-  notes.md
-  book-001/
-    agent.md
-    volume-001/
-      chapter-001.md
-```
-
-No story bible, schema, index, snapshot, diagnostic, compile, or export directories are created yet.
-
-The v0.0 manifest shape is:
+项目清单示例：
 
 ```json
 {
@@ -70,53 +62,87 @@ The v0.0 manifest shape is:
 }
 ```
 
-`projectId` is generated once and remains stable. `updatedAt` changes only when the manifest is written or repaired by the kernel.
+启用手稿后，`capabilities` 会包含 `manuscript.core`，并新增：
 
-## Commands
+```text
+manuscript/
+  manifest.json
+  notes.md
+  book-001/
+    agent.md
+    volume-001/
+      chapter-001.md
+```
 
-- `LoreDock: Initialize Project`
-- `LoreDock: Open Project Manifest`
-- `LoreDock: Show Diagnostics`
-- `LoreDock: Repair Project Manifest`
-- `LoreDock: Enable Manuscript`
-- `LoreDock: New Book`
-- `LoreDock: New Volume`
-- `LoreDock: New Chapter`
-- `LoreDock: Open Chapter`
-- `LoreDock: Rename Book`
-- `LoreDock: Rename Volume`
-- `LoreDock: Rename Chapter`
-- `LoreDock: Move Chapter`
-- `LoreDock: Delete Book`
-- `LoreDock: Delete Volume`
-- `LoreDock: Delete Chapter`
-- `LoreDock: Set Chapter Status`
-- `LoreDock: Set Chapter Target Word Count`
-- `LoreDock: Open Notes`
-- `LoreDock: Manuscript Statistics`
+手稿删除项会先进入：
 
-## Architecture Boundaries
+```text
+.loredock/
+  trash/
+    manuscript/
+```
 
-The v0.0 kernel owns workspace selection, manifest IO, validation, diagnostics, schema registration, migration entry points, command registration, safe file writes, and preview/apply execution.
+v0.1 不会创建故事圣经、索引、快照、导出、编译产物或 AI 配置目录。
 
-Feature modules must attach through the Capability API. They should not import kernel private implementation details or write project files directly.
+## 命令
 
-All project paths stored by LoreDock should be workspace-relative. All file mutations must be declared in an operation plan before they are applied.
+### 项目命令
 
-## Not Included Yet
+- `LoreDock：初始化项目`
+- `LoreDock：打开项目清单`
+- `LoreDock：显示诊断`
+- `LoreDock：修复项目清单`
 
-This version intentionally does not include:
+### 手稿命令
 
-- A custom rich manuscript editor; chapters are normal Markdown files opened by VS Code.
-- Story bible modules for characters, locations, rules, factions, items, or events.
-- Outline boards, plot grids, timelines, or visual planning tools.
-- Knowledge graph, backlinks, entity indexing, or consistency checks.
-- AI assistant features.
-- Compile/export, snapshots, or publishing workflows.
+- `LoreDock：启用手稿`
+- `LoreDock：新建书籍`
+- `LoreDock：新建卷`
+- `LoreDock：新建章节`
+- `LoreDock：打开章节`
+- `LoreDock：重命名书籍`
+- `LoreDock：重命名卷`
+- `LoreDock：重命名章节`
+- `LoreDock：移动章节`
+- `LoreDock：上移章节`
+- `LoreDock：下移章节`
+- `LoreDock：删除书籍`
+- `LoreDock：删除卷`
+- `LoreDock：删除章节`
+- `LoreDock：还原回收站项目`
+- `LoreDock：永久删除回收站项目`
+- `LoreDock：设置章节状态`
+- `LoreDock：设置章节目标字数`
+- `LoreDock：刷新手稿`
+- `LoreDock：切换回收站`
+- `LoreDock：打开笔记`
+- `LoreDock：手稿统计`
 
-See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/versions/`](docs/versions/) for the planned version path.
+## 架构边界
 
-## Development
+LoreDock 的核心原则是本地、透明、可审计、可扩展。
+
+- Kernel 只负责 workspace、manifest、schema、迁移入口、命令注册、诊断、安全写入和 preview/apply。
+- Feature capability 只能通过公开 API 挂载，不直接依赖 Kernel 私有实现。
+- 用户内容优先使用 Markdown，清单和索引用 JSON。
+- 项目数据中的路径必须是 workspace-relative path。
+- 所有复杂写入都必须先声明 operation plan，再执行 apply。
+- v1.0 之前允许为了干净架构调整存储结构；v1.0 之后才进入正式兼容期。
+
+## 尚未包含
+
+`0.1.0` 仍然不包含：
+
+- 自定义富文本手稿编辑器；章节目前是普通 Markdown 文件。
+- 人物、地点、规则、势力、物品、事件等 Story Bible 模块。
+- 大纲板、场景卡、剧情矩阵或时间线。
+- 引用索引、反向链接、实体图谱或一致性实验室。
+- AI assistant/provider 集成。
+- Compile/export、快照、版本对比或发布流程。
+
+后续路线见 [`docs/ROADMAP.md`](docs/ROADMAP.md) 和 [`docs/versions/`](docs/versions/)。
+
+## 开发
 
 ```sh
 npm install
@@ -124,6 +150,6 @@ npm run compile
 npm test
 ```
 
-The current test suite covers manifest defaults and validation, manifest repair behavior, schema registry registration, migration no-op flow, safe file writer boundaries, project initialization, degraded mode disposal, capability command routing, manuscript structure operations, manuscript diagnostics, safe path handling, and word counts.
+当前测试覆盖项目清单默认值与校验、项目修复、schema registry、migration no-op、安全写入边界、项目初始化、degraded mode、capability 路由、手稿结构操作、手稿诊断、安全路径处理、回收站恢复/永久删除和字数统计。
 
-Diagnostics are not written to disk in `0.0.0`; they live in memory and are printed to the LoreDock OutputChannel.
+诊断信息在 `0.1.0` 仍不写入磁盘，只保存在内存中并输出到 LoreDock OutputChannel。
