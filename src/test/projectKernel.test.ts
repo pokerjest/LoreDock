@@ -3,10 +3,13 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
+import { manuscriptCapability } from "../capabilities/manuscript/capability";
 import { ProjectKernel } from "../kernel/projectKernel";
-import type { Capability, OperationPlan } from "../kernel/types";
+import type { Capability, DiagnosticItem, OperationPlan } from "../kernel/types";
 
-suite("ProjectKernel", () => {
+suite("ProjectKernel", function () {
+  this.timeout(10000);
+
   let workspace: string;
   let workspaceFolder: vscode.WorkspaceFolder;
 
@@ -56,7 +59,7 @@ suite("ProjectKernel", () => {
       await kernel.initProject(workspaceFolder);
 
       assert.deepEqual(seenPlans[0], {
-        summary: "Initialize LoreDock project.",
+        summary: "初始化 LoreDock 项目。",
         directoriesToCreate: [".loredock"],
         filesToCreate: [".loredock/project.json"],
         filesToModify: []
@@ -161,7 +164,7 @@ suite("ProjectKernel", () => {
     try {
       await kernel.repairProjectManifest(workspaceFolder);
 
-      assert.match(seenPlans[0].summary, /not a migration/);
+      assert.match(seenPlans[0].summary, /不是版本迁移/);
       const repaired = JSON.parse(await fs.readFile(path.join(workspace, ".loredock/project.json"), "utf8"));
       assert.equal(repaired.schemaVersion, "0.0.0");
       assert.equal(repaired.projectId, "existing_project");
@@ -253,8 +256,9 @@ suite("ProjectKernel", () => {
       await kernel.refreshWorkspaceFolder(secondWorkspaceFolder);
 
       await vscode.commands.executeCommand("loredock.test.routeCommand", secondWorkspaceFolder);
+      await vscode.commands.executeCommand("loredock.test.routeCommand", { workspaceFolder });
 
-      assert.deepEqual(invoked, [secondWorkspace]);
+      assert.deepEqual(invoked, [secondWorkspace, workspace]);
     } finally {
       kernel.dispose();
       await fs.rm(secondWorkspace, { recursive: true, force: true });
@@ -278,7 +282,12 @@ suite("ProjectKernel", () => {
 
     try {
       await kernel.refreshWorkspaceFolder(workspaceFolder);
-      await assert.rejects(async () => vscode.commands.executeCommand("loredock.test.partialActivationCommand"));
+      const routes = (
+        kernel as unknown as {
+          capabilityCommandRoutes: Map<string, unknown>;
+        }
+      ).capabilityCommandRoutes;
+      assert.equal(routes.has("loredock.test.partialActivationCommand"), false);
       assert.equal(invoked, false);
     } finally {
       kernel.dispose();
@@ -342,8 +351,185 @@ suite("ProjectKernel", () => {
         removed: [workspaceFolder]
       } as vscode.WorkspaceFoldersChangeEvent);
 
-      await assert.rejects(async () => vscode.commands.executeCommand("loredock.test.removedWorkspaceCommand"));
+      const routes = (
+        kernel as unknown as {
+          capabilityCommandRoutes: Map<string, unknown>;
+        }
+      ).capabilityCommandRoutes;
+      assert.equal(routes.has("loredock.test.removedWorkspaceCommand"), false);
       assert.equal(invoked, false);
+    } finally {
+      kernel.dispose();
+    }
+  });
+
+  test("registers bootstrap commands before a capability is enabled", async () => {
+    let invoked = false;
+    const capability: Capability = {
+      id: "test.bootstrapCapability",
+      bootstrap(context) {
+        return [
+          context.registerCommand("loredock.test.bootstrapCommand", () => {
+            invoked = true;
+          })
+        ];
+      },
+      activate() {
+        return [];
+      }
+    };
+    const kernel = createKernel({ capabilities: [capability] });
+
+    try {
+      await kernel.refreshWorkspaceFolder(workspaceFolder);
+      await vscode.commands.executeCommand("loredock.test.bootstrapCommand", workspaceFolder);
+      assert.equal(invoked, true);
+    } finally {
+      kernel.dispose();
+    }
+  });
+
+  test("retries capability command dispatch after refreshing an empty route", async () => {
+    const command = "loredock.test.lazyBootstrapCommand";
+    const kernel = createKernel({});
+    const routes = getCapabilityCommandRoutes(kernel);
+    let refreshed = false;
+    let invoked = false;
+
+    routes.set(command, {
+      disposable: { dispose() {} },
+      handlers: new Map(),
+      persistent: true
+    });
+    replaceRefreshAllWorkspaceFolders(kernel, async () => {
+      refreshed = true;
+      routes.get(command)?.handlers.set(workspace, {
+        workspaceFolder,
+        callback: () => {
+          invoked = true;
+          return "ok";
+        }
+      });
+    });
+
+    try {
+      const result = await dispatchCapabilityCommand(kernel, command, [workspaceFolder]);
+
+      assert.equal(refreshed, true);
+      assert.equal(invoked, true);
+      assert.equal(result, "ok");
+    } finally {
+      kernel.dispose();
+    }
+  });
+
+  test("reports unsafe project manifest paths without reading through symlinks", async () => {
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "loredock-kernel-outside-"));
+    const kernel = createKernel({});
+
+    try {
+      await fs.mkdir(path.join(outside, ".loredock"));
+      await fs.writeFile(
+        path.join(outside, ".loredock/project.json"),
+        JSON.stringify(
+          {
+            schemaVersion: "0.0.0",
+            projectId: "loredock_outside",
+            title: "Outside",
+            createdAt: "2026-06-29T00:00:00.000Z",
+            updatedAt: "2026-06-29T00:00:00.000Z",
+            capabilities: []
+          },
+          null,
+          2
+        ),
+        "utf8"
+      );
+      await fs.symlink(path.join(outside, ".loredock"), path.join(workspace, ".loredock"), "dir");
+
+      await kernel.refreshWorkspaceFolder(workspaceFolder);
+
+      const diagnostics = getDiagnostics(kernel, workspace);
+      assert.equal(diagnostics.some((item) => item.code === "manifest.path.unsafe"), true);
+    } finally {
+      kernel.dispose();
+      await fs.rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  test("scopes capability services to the workspace folder and disposes them", async () => {
+    await writeManifest(workspace, "test.serviceCapability");
+
+    let valueDuringActivation: string | undefined;
+    const capability: Capability = {
+      id: "test.serviceCapability",
+      activate(context) {
+        const service = { value: "workspace-service" };
+        const registration = context.registerCapabilityService("test.service", service);
+        valueDuringActivation = context.getCapabilityService<typeof service>("test.service")?.value;
+        return [registration];
+      }
+    };
+    const kernel = createKernel({ capabilities: [capability] });
+
+    try {
+      await kernel.refreshWorkspaceFolder(workspaceFolder);
+      assert.equal(valueDuringActivation, "workspace-service");
+    } finally {
+      kernel.dispose();
+    }
+  });
+
+  test("enableManuscript creates manuscript files and enables the capability", async () => {
+    const seenPlans: OperationPlan[] = [];
+    const kernel = createKernel({
+      capabilities: [manuscriptCapability],
+      confirm: async (plan) => {
+        seenPlans.push(plan);
+        return true;
+      },
+      now: () => new Date("2026-06-29T00:00:00.000Z")
+    });
+
+    try {
+      await kernel.initProject(workspaceFolder);
+      await vscode.commands.executeCommand("loredock.enableManuscript", workspaceFolder);
+
+      assert.equal(await exists(path.join(workspace, "manuscript/manifest.json")), true);
+      assert.equal(await exists(path.join(workspace, "manuscript/notes.md")), true);
+      assert.equal(await exists(path.join(workspace, "manuscript/book-001/agent.md")), true);
+      assert.equal(await exists(path.join(workspace, "manuscript/book-001/volume-001/chapter-001.md")), true);
+
+      const projectManifest = JSON.parse(await fs.readFile(path.join(workspace, ".loredock/project.json"), "utf8"));
+      assert.equal(projectManifest.capabilities.includes("manuscript.core"), true);
+      assert.equal(seenPlans.some((plan) => plan.summary.includes("启用手稿")), true);
+    } finally {
+      kernel.dispose();
+    }
+  });
+
+  test("enableManuscript refuses to overwrite existing initial files", async () => {
+    const seenPlans: OperationPlan[] = [];
+    const kernel = createKernel({
+      capabilities: [manuscriptCapability],
+      confirm: async (plan) => {
+        seenPlans.push(plan);
+        return true;
+      },
+      now: () => new Date("2026-06-29T00:00:00.000Z")
+    });
+
+    try {
+      await kernel.initProject(workspaceFolder);
+      await fs.mkdir(path.join(workspace, "manuscript"), { recursive: true });
+      await fs.writeFile(path.join(workspace, "manuscript/notes.md"), "keep me", "utf8");
+
+      await vscode.commands.executeCommand("loredock.enableManuscript", workspaceFolder);
+
+      const projectManifest = JSON.parse(await fs.readFile(path.join(workspace, ".loredock/project.json"), "utf8"));
+      assert.equal(projectManifest.capabilities.includes("manuscript.core"), false);
+      assert.equal(await fs.readFile(path.join(workspace, "manuscript/notes.md"), "utf8"), "keep me");
+      assert.equal(seenPlans.filter((plan) => plan.summary.includes("启用手稿")).length, 0);
     } finally {
       kernel.dispose();
     }
@@ -387,6 +573,56 @@ function getWorkspaceFolderChangeHandler(
       handleWorkspaceFoldersChanged(event: vscode.WorkspaceFoldersChangeEvent): void;
     }
   ).handleWorkspaceFoldersChanged.bind(kernel);
+}
+
+function getDiagnostics(kernel: ProjectKernel, workspacePath: string): DiagnosticItem[] {
+  return (
+    kernel as unknown as {
+      diagnostics: { getForWorkspace(workspaceFolderPath: string): DiagnosticItem[] };
+    }
+  ).diagnostics.getForWorkspace(workspacePath);
+}
+
+function getCapabilityCommandRoutes(kernel: ProjectKernel): Map<
+  string,
+  {
+    disposable: vscode.Disposable;
+    handlers: Map<string, { workspaceFolder: vscode.WorkspaceFolder; callback: (...args: unknown[]) => unknown }>;
+    persistent: boolean;
+  }
+> {
+  return (
+    kernel as unknown as {
+      capabilityCommandRoutes: Map<
+        string,
+        {
+          disposable: vscode.Disposable;
+          handlers: Map<string, { workspaceFolder: vscode.WorkspaceFolder; callback: (...args: unknown[]) => unknown }>;
+          persistent: boolean;
+        }
+      >;
+    }
+  ).capabilityCommandRoutes;
+}
+
+function replaceRefreshAllWorkspaceFolders(kernel: ProjectKernel, callback: () => Promise<void>): void {
+  (
+    kernel as unknown as {
+      refreshAllWorkspaceFolders: () => Promise<void>;
+    }
+  ).refreshAllWorkspaceFolders = callback;
+}
+
+async function dispatchCapabilityCommand(
+  kernel: ProjectKernel,
+  command: string,
+  args: unknown[]
+): Promise<unknown> {
+  return (
+    kernel as unknown as {
+      dispatchCapabilityCommand(command: string, args: unknown[]): Promise<unknown>;
+    }
+  ).dispatchCapabilityCommand(command, args);
 }
 
 async function exists(filePath: string): Promise<boolean> {

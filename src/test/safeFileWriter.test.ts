@@ -43,7 +43,20 @@ suite("SafeFileWriter", () => {
     });
 
     await writer.ensureDirectory(".loredock");
-    await assert.rejects(() => writer.writeFile(".loredock/project.json", "{}\n"), /not declared/);
+    await assert.rejects(() => writer.writeFile(".loredock/project.json", "{}\n"), /未在操作计划中声明/);
+  });
+
+  test("rejects create writes over existing files", async () => {
+    await fs.writeFile(path.join(workspace, "file.txt"), "original", "utf8");
+    const writer = new SafeFileWriter(workspace, {
+      summary: "create",
+      directoriesToCreate: [],
+      filesToCreate: ["file.txt"],
+      filesToModify: []
+    });
+
+    await assert.rejects(() => writer.writeFile("file.txt", "new"), /已存在/);
+    assert.equal(await fs.readFile(path.join(workspace, "file.txt"), "utf8"), "original");
   });
 
   test("does not create undeclared parent directories implicitly", async () => {
@@ -54,7 +67,7 @@ suite("SafeFileWriter", () => {
       filesToModify: []
     });
 
-    await assert.rejects(() => writer.ensureDirectory("parent/child"), /does not exist|not declared/);
+    await assert.rejects(() => writer.ensureDirectory("parent/child"), /不存在|未在操作计划中声明/);
     assert.equal(await exists(path.join(workspace, "parent")), false);
   });
 
@@ -81,8 +94,8 @@ suite("SafeFileWriter", () => {
       filesToModify: []
     });
 
-    await assert.rejects(() => writer.writeFile("/tmp/outside", ""), /workspace-relative/);
-    await assert.rejects(() => writer.writeFile("../outside", ""), /workspace-relative/);
+    await assert.rejects(() => writer.writeFile("/tmp/outside", ""), /工作区相对路径/);
+    await assert.rejects(() => writer.writeFile("../outside", ""), /工作区相对路径/);
   });
 
   test("rejects symlink parent escape", async () => {
@@ -96,7 +109,19 @@ suite("SafeFileWriter", () => {
       filesToModify: []
     });
 
-    await assert.rejects(() => writer.writeFile("linked/file.txt", "nope"), /escapes the workspace/);
+    await assert.rejects(() => writer.writeFile("linked/file.txt", "nope"), /越出了工作区/);
+  });
+
+  test("rejects symlink directory target escape", async () => {
+    await fs.symlink(outside, path.join(workspace, "linked"));
+    const writer = new SafeFileWriter(workspace, {
+      summary: "directory",
+      directoriesToCreate: ["linked"],
+      filesToCreate: [],
+      filesToModify: []
+    });
+
+    await assert.rejects(() => writer.ensureDirectory("linked"), /越出了工作区/);
   });
 
   test("rejects existing symlink target escape", async () => {
@@ -111,7 +136,44 @@ suite("SafeFileWriter", () => {
       filesToModify: ["project.json"]
     });
 
-    await assert.rejects(() => writer.writeFile("project.json", "{}\n"), /escapes the workspace/);
+    await assert.rejects(() => writer.writeFile("project.json", "{}\n"), /越出了工作区/);
+  });
+
+  test("moves and deletes declared files", async () => {
+    await fs.mkdir(path.join(workspace, "manuscript"));
+    await fs.writeFile(path.join(workspace, "manuscript/source.md"), "draft", "utf8");
+    const writer = new SafeFileWriter(workspace, {
+      summary: "move/delete",
+      directoriesToCreate: [],
+      filesToCreate: [],
+      filesToModify: [],
+      filesToMove: [{ from: "manuscript/source.md", to: "manuscript/target.md" }],
+      filesToDelete: ["manuscript/target.md"]
+    });
+
+    await writer.moveFile("manuscript/source.md", "manuscript/target.md");
+    assert.equal(await exists(path.join(workspace, "manuscript/source.md")), false);
+    assert.equal(await fs.readFile(path.join(workspace, "manuscript/target.md"), "utf8"), "draft");
+
+    await writer.deleteFile("manuscript/target.md");
+    assert.equal(await exists(path.join(workspace, "manuscript/target.md")), false);
+  });
+
+  test("rejects undeclared move and delete operations", async () => {
+    await fs.mkdir(path.join(workspace, "manuscript"));
+    await fs.writeFile(path.join(workspace, "manuscript/source.md"), "draft", "utf8");
+    const writer = new SafeFileWriter(workspace, {
+      summary: "move/delete",
+      directoriesToCreate: [],
+      filesToCreate: [],
+      filesToModify: []
+    });
+
+    await assert.rejects(
+      () => writer.moveFile("manuscript/source.md", "manuscript/target.md"),
+      /未在操作计划中声明/
+    );
+    await assert.rejects(() => writer.deleteFile("manuscript/source.md"), /未在操作计划中声明/);
   });
 });
 

@@ -1,7 +1,7 @@
 {
   "name": "loredock",
   "displayName": "LoreDock",
-  "description": "Local-first story project system for VS Code.",
+  "description": "面向 VS Code 的本地优先故事项目系统。",
   "version": "0.0.0",
   "publisher": "loredock",
   "license": "UNLICENSED",
@@ -17,28 +17,258 @@
     "onCommand:loredock.initProject",
     "onCommand:loredock.openProjectManifest",
     "onCommand:loredock.showDiagnostics",
-    "onCommand:loredock.repairProjectManifest"
+    "onCommand:loredock.repairProjectManifest",
+    "onCommand:loredock.enableManuscript",
+    "onView:loredock.manuscript.tree"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "loredock.initProject",
-        "title": "LoreDock: Initialize Project"
+        "title": "LoreDock：初始化项目",
+        "icon": "$(rocket)"
       },
       {
         "command": "loredock.openProjectManifest",
-        "title": "LoreDock: Open Project Manifest"
+        "title": "LoreDock：打开项目清单",
+        "icon": "$(json)"
       },
       {
         "command": "loredock.showDiagnostics",
-        "title": "LoreDock: Show Diagnostics"
+        "title": "LoreDock：显示诊断",
+        "icon": "$(warning)"
       },
       {
         "command": "loredock.repairProjectManifest",
-        "title": "LoreDock: Repair Project Manifest"
+        "title": "LoreDock：修复项目清单",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "loredock.enableManuscript",
+        "title": "LoreDock：启用手稿",
+        "icon": "$(add)"
+      },
+      {
+        "command": "loredock.manuscript.createBook",
+        "title": "LoreDock：新建书籍",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "loredock.manuscript.createVolume",
+        "title": "LoreDock：新建卷",
+        "icon": "$(library)"
+      },
+      {
+        "command": "loredock.manuscript.createChapter",
+        "title": "LoreDock：新建章节",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "loredock.manuscript.openChapter",
+        "title": "LoreDock：打开章节",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "loredock.manuscript.renameBook",
+        "title": "LoreDock：重命名书籍"
+      },
+      {
+        "command": "loredock.manuscript.renameVolume",
+        "title": "LoreDock：重命名卷"
+      },
+      {
+        "command": "loredock.manuscript.renameChapter",
+        "title": "LoreDock：重命名章节"
+      },
+      {
+        "command": "loredock.manuscript.moveChapter",
+        "title": "LoreDock：移动章节"
+      },
+      {
+        "command": "loredock.manuscript.moveChapterUp",
+        "title": "LoreDock：上移章节",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "loredock.manuscript.moveChapterDown",
+        "title": "LoreDock：下移章节",
+        "icon": "$(arrow-down)"
+      },
+      {
+        "command": "loredock.manuscript.deleteBook",
+        "title": "LoreDock：删除书籍"
+      },
+      {
+        "command": "loredock.manuscript.deleteVolume",
+        "title": "LoreDock：删除卷"
+      },
+      {
+        "command": "loredock.manuscript.deleteChapter",
+        "title": "LoreDock：删除章节"
+      },
+      {
+        "command": "loredock.manuscript.restoreTrashItem",
+        "title": "LoreDock：还原回收站项目",
+        "icon": "$(history)"
+      },
+      {
+        "command": "loredock.manuscript.permanentlyDeleteTrashItem",
+        "title": "LoreDock：永久删除回收站项目",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "loredock.manuscript.setChapterStatus",
+        "title": "LoreDock：设置章节状态"
+      },
+      {
+        "command": "loredock.manuscript.setChapterTargetWordCount",
+        "title": "LoreDock：设置章节目标字数"
+      },
+      {
+        "command": "loredock.manuscript.refreshTree",
+        "title": "LoreDock：刷新手稿",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "loredock.manuscript.toggleTrash",
+        "title": "LoreDock：切换回收站",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "loredock.manuscript.openNotes",
+        "title": "LoreDock：打开笔记",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "loredock.manuscript.showStats",
+        "title": "LoreDock：手稿统计",
+        "icon": "$(graph)"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "loredock",
+          "title": "LoreDock",
+          "icon": "resources/loredock.svg"
+        }
+      ]
+    },
+    "views": {
+      "loredock": [
+        {
+          "id": "loredock.manuscript.tree",
+          "name": "手稿"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "loredock.enableManuscript",
+          "when": "view == loredock.manuscript.tree && !loredock.manuscript.active",
+          "group": "navigation"
+        },
+        {
+          "command": "loredock.manuscript.createBook",
+          "when": "view == loredock.manuscript.tree && loredock.manuscript.active && !loredock.manuscript.trashMode",
+          "group": "navigation"
+        },
+        {
+          "command": "loredock.manuscript.showStats",
+          "when": "view == loredock.manuscript.tree && loredock.manuscript.active && !loredock.manuscript.trashMode",
+          "group": "navigation"
+        },
+        {
+          "command": "loredock.manuscript.toggleTrash",
+          "when": "view == loredock.manuscript.tree && loredock.manuscript.active",
+          "group": "navigation"
+        },
+        {
+          "command": "loredock.manuscript.refreshTree",
+          "when": "view == loredock.manuscript.tree",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "loredock.manuscript.createVolume",
+          "when": "view == loredock.manuscript.tree && viewItem == loredock.manuscript.book",
+          "group": "inline"
+        },
+        {
+          "command": "loredock.manuscript.renameBook",
+          "when": "view == loredock.manuscript.tree && viewItem == loredock.manuscript.book"
+        },
+        {
+          "command": "loredock.manuscript.deleteBook",
+          "when": "view == loredock.manuscript.tree && viewItem == loredock.manuscript.book"
+        },
+        {
+          "command": "loredock.manuscript.createChapter",
+          "when": "view == loredock.manuscript.tree && viewItem == loredock.manuscript.volume",
+          "group": "inline"
+        },
+        {
+          "command": "loredock.manuscript.renameVolume",
+          "when": "view == loredock.manuscript.tree && viewItem == loredock.manuscript.volume"
+        },
+        {
+          "command": "loredock.manuscript.deleteVolume",
+          "when": "view == loredock.manuscript.tree && viewItem == loredock.manuscript.volume"
+        },
+        {
+          "command": "loredock.manuscript.openChapter",
+          "when": "view == loredock.manuscript.tree && viewItem == loredock.manuscript.chapter",
+          "group": "inline"
+        },
+        {
+          "command": "loredock.manuscript.renameChapter",
+          "when": "view == loredock.manuscript.tree && viewItem == loredock.manuscript.chapter"
+        },
+        {
+          "command": "loredock.manuscript.moveChapter",
+          "when": "view == loredock.manuscript.tree && viewItem == loredock.manuscript.chapter"
+        },
+        {
+          "command": "loredock.manuscript.moveChapterUp",
+          "when": "view == loredock.manuscript.tree && viewItem == loredock.manuscript.chapter",
+          "group": "inline@1"
+        },
+        {
+          "command": "loredock.manuscript.moveChapterDown",
+          "when": "view == loredock.manuscript.tree && viewItem == loredock.manuscript.chapter",
+          "group": "inline@2"
+        },
+        {
+          "command": "loredock.manuscript.deleteChapter",
+          "when": "view == loredock.manuscript.tree && viewItem == loredock.manuscript.chapter"
+        },
+        {
+          "command": "loredock.manuscript.restoreTrashItem",
+          "when": "view == loredock.manuscript.tree && viewItem == loredock.manuscript.trashItem",
+          "group": "inline"
+        },
+        {
+          "command": "loredock.manuscript.permanentlyDeleteTrashItem",
+          "when": "view == loredock.manuscript.tree && viewItem == loredock.manuscript.trashItem",
+          "group": "inline@1"
+        },
+        {
+          "command": "loredock.manuscript.setChapterStatus",
+          "when": "view == loredock.manuscript.tree && viewItem == loredock.manuscript.chapter"
+        },
+        {
+          "command": "loredock.manuscript.setChapterTargetWordCount",
+          "when": "view == loredock.manuscript.tree && viewItem == loredock.manuscript.chapter"
+        },
+        {
+          "command": "loredock.manuscript.openNotes",
+          "when": "view == loredock.manuscript.tree && viewItem == loredock.manuscript.notes"
+        }
+      ]
+    }
   },
   "scripts": {
     "compile": "tsc -p ./",

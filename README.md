@@ -4,13 +4,13 @@ LoreDock is a local-first story project system for VS Code.
 
 Current package version: **0.0.0**.
 
-Current milestone: **v0.0 Project Kernel**.
+Current milestone: **v0.1 Manuscript Core on the v0.0 Project Kernel**.
 
-LoreDock is being rebuilt as a transparent, local-first writing system for long-form fiction. The current implementation is intentionally focused on the kernel: project discovery, manifest lifecycle, safe writes, diagnostics, schema registration, migration boundaries, and the extension points that future writing, story bible, outline, timeline, assistant, and export modules will use.
+LoreDock is being rebuilt as a transparent, local-first writing system for long-form fiction. The current implementation includes the project kernel plus the first usable manuscript capability: project discovery, manifest lifecycle, safe writes, diagnostics, schema registration, capability routing, and a manuscript tree for books, volumes, chapters, notes, and basic progress statistics.
 
 ## Current Status
 
-`0.0.0` implements the foundation for a LoreDock project inside a VS Code workspace.
+`0.0.0` now carries the v0.0 foundation and the in-development v0.1 manuscript core.
 
 - VS Code extension and TypeScript project scaffold.
 - Fixed workspace-folder project root for v0.0.
@@ -25,19 +25,37 @@ LoreDock is being rebuilt as a transparent, local-first writing system for long-
 - Capability API for commands, tree views, file watchers, schemas, diagnostics, and disposable lifecycle.
 - Multi-root workspace routing through explicit folder selection.
 - Example empty capability used to prove capability activation and command routing.
+- Manuscript capability activation through `manuscript.core`.
+- Chinese localized Manuscript tree view in the LoreDock activity bar.
+- Manuscript structure management for books, volumes, chapters, per-book AI agent guides, notes, status, target word count, moves, and statistics.
+- Per-book `agent.md` guides split read-only system rules from user-editable custom rules so AI plugins can follow LoreDock structure while preserving each book's collaboration preferences.
+- Manuscript manifest validation for broken references, invalid paths, missing files, orphan Markdown files, duplicate paths, and symlink escapes.
+- Manuscript recycle bin: deleting books, volumes, or chapters first moves them to `.loredock/trash/manuscript/`; recycle-bin items can be restored or permanently removed recursively.
 
-The kernel does not understand manuscript, story bible, timeline, assistant, compile, or export concepts yet. Those are later capabilities, not v0.0 concerns.
+The kernel remains independent from manuscript internals. Story bible, outline, timeline, assistant, compile, and export concepts are still later capabilities.
 
 ## Project Files
 
-Initialization creates only:
+Project initialization creates only:
 
 ```text
 .loredock/
   project.json
 ```
 
-No manuscript, lore, schema, index, snapshot, diagnostic, or export directories are created in `0.0.0`.
+Enabling Manuscript adds:
+
+```text
+manuscript/
+  manifest.json
+  notes.md
+  book-001/
+    agent.md
+    volume-001/
+      chapter-001.md
+```
+
+No story bible, schema, index, snapshot, diagnostic, compile, or export directories are created yet.
 
 The v0.0 manifest shape is:
 
@@ -60,6 +78,22 @@ The v0.0 manifest shape is:
 - `LoreDock: Open Project Manifest`
 - `LoreDock: Show Diagnostics`
 - `LoreDock: Repair Project Manifest`
+- `LoreDock: Enable Manuscript`
+- `LoreDock: New Book`
+- `LoreDock: New Volume`
+- `LoreDock: New Chapter`
+- `LoreDock: Open Chapter`
+- `LoreDock: Rename Book`
+- `LoreDock: Rename Volume`
+- `LoreDock: Rename Chapter`
+- `LoreDock: Move Chapter`
+- `LoreDock: Delete Book`
+- `LoreDock: Delete Volume`
+- `LoreDock: Delete Chapter`
+- `LoreDock: Set Chapter Status`
+- `LoreDock: Set Chapter Target Word Count`
+- `LoreDock: Open Notes`
+- `LoreDock: Manuscript Statistics`
 
 ## Architecture Boundaries
 
@@ -71,9 +105,9 @@ All project paths stored by LoreDock should be workspace-relative. All file muta
 
 ## Not Included Yet
 
-`0.0.0` intentionally does not include:
+This version intentionally does not include:
 
-- Manuscript editing or chapter/scene files.
+- A custom rich manuscript editor; chapters are normal Markdown files opened by VS Code.
 - Story bible modules for characters, locations, rules, factions, items, or events.
 - Outline boards, plot grids, timelines, or visual planning tools.
 - Knowledge graph, backlinks, entity indexing, or consistency checks.
@@ -90,6 +124,6 @@ npm run compile
 npm test
 ```
 
-The current test suite covers manifest defaults and validation, manifest repair behavior, schema registry registration, migration no-op flow, safe file writer boundaries, project initialization, degraded mode disposal, and capability command routing.
+The current test suite covers manifest defaults and validation, manifest repair behavior, schema registry registration, migration no-op flow, safe file writer boundaries, project initialization, degraded mode disposal, capability command routing, manuscript structure operations, manuscript diagnostics, safe path handling, and word counts.
 
 Diagnostics are not written to disk in `0.0.0`; they live in memory and are printed to the LoreDock OutputChannel.

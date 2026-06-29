@@ -29,6 +29,8 @@ Assistant -> 直接修改 manuscript 或 lore
 Index -> 成为唯一真实数据源
 ```
 
+跨 capability 读取只能通过公开 capability service。比如后续大纲、图谱、时间线、导出和 AI 需要读取手稿时，应该依赖 Manuscript 暴露的 reader、actions 和 events 接口，而不是直接读取或修改 `manuscript/manifest.json`。
+
 ## 数据分层
 
 ```text
@@ -61,6 +63,16 @@ Projection 是为了 UI 或检查生成的派生数据，例如树节点、剧�
 - 任何批量 action 都必须 preview first。
 - 索引错误不能污染 canon。
 
+## Capability Service 边界
+
+Kernel 需要提供最小 service registry，让 capability 之间可以通过窄接口协作：
+
+- service 只能暴露明确的 reader、actions 和 events。
+- reader 可以返回 canon 的只读 projection，但不能泄露模块私有写入细节。
+- actions 负责受控修改本模块 canon，复杂写入必须走 preview、confirm、apply。
+- events 只通知变化类型和必要 ID，不传递可被其他模块直接写回的内部对象引用。
+- 后续模块不能为了方便直接读写另一个模块的私有 canon 文件。
+
 ## 写入模型
 
 所有复杂写入都走同一套流程：
@@ -76,6 +88,7 @@ Projection 是为了 UI 或检查生成的派生数据，例如树节点、剧�
 
 - 大纲导入。
 - 批量重命名。
+- 手稿结构创建、移动和删除。
 - 自动修复。
 - 时间线同步。
 - AI 建议应用。

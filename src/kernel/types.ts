@@ -30,10 +30,27 @@ export interface OperationPlan {
   directoriesToCreate: string[];
   filesToCreate: string[];
   filesToModify: string[];
+  filesToMove?: FileMoveOperation[];
+  filesToDelete?: string[];
+  filesToBackup?: FileBackupOperation[];
+  directoriesToMove?: FileMoveOperation[];
+  directoriesToDelete?: string[];
+}
+
+export interface FileMoveOperation {
+  from: string;
+  to: string;
+}
+
+export interface FileBackupOperation {
+  source: string;
+  backup: string;
 }
 
 export interface Capability {
   id: string;
+  bootstrapCommands?: string[];
+  bootstrap?(context: KernelContext): vscode.Disposable[];
   activate(context: KernelContext): vscode.Disposable[];
 }
 
@@ -42,12 +59,18 @@ export interface KernelContext {
   output: vscode.OutputChannel;
   diagnostics: {
     add(item: DiagnosticItem): void;
+    clearMatching(workspaceFolderPath: string, predicate: (item: DiagnosticItem) => boolean): void;
     getForWorkspace(workspaceFolderPath: string): DiagnosticItem[];
   };
   registerCommand(command: string, callback: (...args: unknown[]) => unknown): vscode.Disposable;
   registerFileWatcher(pattern: vscode.GlobPattern): vscode.FileSystemWatcher;
   registerTreeDataProvider<T>(viewId: string, provider: vscode.TreeDataProvider<T>): vscode.Disposable;
   registerSchema(schema: RegisteredSchema): vscode.Disposable;
+  registerCapabilityService<T>(id: string, service: T): vscode.Disposable;
+  getCapabilityService<T>(id: string): T | undefined;
+  confirmOperationPlan(plan: OperationPlan): Promise<boolean>;
+  refreshWorkspaceFolder(): Promise<void>;
+  now(): Date;
 }
 
 export interface ManifestValidationResult {

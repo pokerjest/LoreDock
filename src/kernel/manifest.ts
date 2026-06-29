@@ -69,7 +69,7 @@ export function validateProjectManifest(
   };
 
   if (!isRecord(value)) {
-    add("error", "manifest.notObject", "Project manifest must be a JSON object.");
+    add("error", "manifest.notObject", "项目清单必须是 JSON 对象。");
     return { diagnostics, isValid: false, degraded: true };
   }
 
@@ -78,34 +78,34 @@ export function validateProjectManifest(
   if (candidate.schemaVersion !== MANIFEST_SCHEMA_VERSION) {
     degraded = true;
     if (typeof candidate.schemaVersion !== "string" || candidate.schemaVersion.trim() === "") {
-      add("error", "manifest.schemaVersion.invalid", "schemaVersion must be the string \"0.0.0\".");
+      add("error", "manifest.schemaVersion.invalid", "schemaVersion 必须是字符串 \"0.0.0\"。");
     } else {
       add(
         "error",
         "manifest.schemaVersion.unsupported",
-        `Unsupported schemaVersion "${candidate.schemaVersion}". v0.0 only supports "0.0.0".`
+        `不支持 schemaVersion "${candidate.schemaVersion}"。v0.0 只支持 "0.0.0"。`
       );
     }
   }
 
   if (!isNonEmptyString(candidate.projectId)) {
     degraded = true;
-    add("error", "manifest.projectId.invalid", "projectId must be a non-empty string.");
+    add("error", "manifest.projectId.invalid", "projectId 必须是非空字符串。");
   }
 
   if (!isNonEmptyString(candidate.title)) {
     degraded = true;
-    add("error", "manifest.title.invalid", "title must be a non-empty string.");
+    add("error", "manifest.title.invalid", "title 必须是非空字符串。");
   }
 
   if (!isIsoTimestamp(candidate.createdAt)) {
     degraded = true;
-    add("error", "manifest.createdAt.invalid", "createdAt must be an ISO timestamp string.");
+    add("error", "manifest.createdAt.invalid", "createdAt 必须是 ISO 时间戳字符串。");
   }
 
   if (!isIsoTimestamp(candidate.updatedAt)) {
     degraded = true;
-    add("error", "manifest.updatedAt.invalid", "updatedAt must be an ISO timestamp string.");
+    add("error", "manifest.updatedAt.invalid", "updatedAt 必须是 ISO 时间戳字符串。");
   }
 
   const capabilitiesResult = validateCapabilities(candidate.capabilities);
@@ -123,7 +123,7 @@ export function validateProjectManifest(
 
   for (const capabilityId of capabilitiesResult.validCapabilities) {
     if (!knownCapabilityIds.has(capabilityId)) {
-      add("warning", "manifest.capability.unknown", `Unknown capability "${capabilityId}" is enabled.`);
+      add("warning", "manifest.capability.unknown", `已启用未知能力 "${capabilityId}"。`);
     }
   }
 
@@ -169,7 +169,7 @@ function validateCapabilities(value: unknown): {
         {
           severity: "error",
           code: "manifest.capabilities.invalid",
-          message: "capabilities must be an array of strings."
+          message: "capabilities 必须是字符串数组。"
         }
       ],
       hasErrors: true
@@ -185,7 +185,7 @@ function validateCapabilities(value: unknown): {
       diagnostics.push({
         severity: "error",
         code: "manifest.capability.invalid",
-        message: `capabilities[${index}] must be a non-empty string.`
+        message: `capabilities[${index}] 必须是非空字符串。`
       });
       return;
     }
@@ -194,7 +194,7 @@ function validateCapabilities(value: unknown): {
       diagnostics.push({
         severity: "warning",
         code: "manifest.capability.duplicate",
-        message: `Duplicate capability "${item}" will be activated only once in memory.`
+        message: `重复能力 "${item}" 只会在内存中激活一次。`
       });
       return;
     }

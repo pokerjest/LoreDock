@@ -54,7 +54,7 @@ v0.0-v0.2 是地基期，目标不是堆功能，而是把后续所有能力的�
 
 - **Workspace 边界**：所有用户数据都必须在当前 workspace 内，路径统一使用 workspace-relative。
 - **Project Manifest 边界**：manifest 只记录项目身份、版本和启用能力，不承载每个模块的全部业务细节；全局索引入口等字段等后续版本（v0.5 引入索引后）真正需要时再加。
-- **Capability 边界**：每个能力模块只能通过公开 kernel API 注册命令、视图、schema、文件 watcher 和 diagnostics。
+- **Capability 边界**：每个能力模块只能通过公开 kernel API 注册命令、视图、schema、文件 watcher、diagnostics 和窄 service；跨模块协作必须通过公开 reader、actions 和 events。
 - **Storage 边界**：用户可读内容、机器索引、缓存、诊断和快照必须分开存放。
 - **Schema 边界**：每类文档必须有 `schemaVersion` 或等价版本标记，方便未来迁移。
 - **Mutation 边界**：任何批量写入、导入、同步、修复、AI 建议和蓝图转换都必须走统一 preview/apply 流程。
@@ -80,7 +80,7 @@ v0.0-v0.2 是地基期，目标不是堆功能，而是把后续所有能力的�
 ## 能力分层
 
 1. **Kernel**：项目识别、schema 注册、迁移、安全写入、命令注册、日志、诊断。
-2. **Manuscript**：书、卷、章、场景、状态、字数、草稿。
+2. **Manuscript**：书、卷、章、章节状态、字数、草稿。
 3. **Story Bible**：故事元素、模板、别名、标签、隐藏事实、公开事实。
 4. **Structure**：大纲、场景卡、剧情矩阵、故事弧、写作方法模板。
 5. **Knowledge Graph**：反链、未链接提及、引用、实体图、进展记录。
@@ -101,9 +101,12 @@ v0.0-v0.2 是地基期，目标不是堆功能，而是把后续所有能力的�
   snapshots/
   diagnostics/
 manuscript/
+  manifest.json
   book-001/
+    agent.md
     volume-001/
       chapter-001.md
+  notes.md
 lore/
   characters/
   locations/

@@ -15,19 +15,33 @@ export class PreviewApplyService {
   }
 
   public printPlan(plan: OperationPlan): void {
-    this.output.appendLine("LoreDock operation preview");
+    this.output.appendLine("LoreDock 操作预览");
     this.output.appendLine("==========================");
     this.output.appendLine(plan.summary);
-    this.printList("Directories to create", plan.directoriesToCreate);
-    this.printList("Files to create", plan.filesToCreate);
-    this.printList("Files to modify", plan.filesToModify);
+    this.printList("将创建的目录", plan.directoriesToCreate);
+    this.printList("将创建的文件", plan.filesToCreate);
+    this.printList("将修改的文件", plan.filesToModify);
+    this.printList(
+      "将移动的文件",
+      (plan.filesToMove ?? []).map((operation) => `${operation.from} -> ${operation.to}`)
+    );
+    this.printList(
+      "将移动的目录",
+      (plan.directoriesToMove ?? []).map((operation) => `${operation.from} -> ${operation.to}`)
+    );
+    this.printList("将删除的文件", plan.filesToDelete ?? []);
+    this.printList("将递归删除的目录", plan.directoriesToDelete ?? []);
+    this.printList(
+      "将备份的文件",
+      (plan.filesToBackup ?? []).map((operation) => `${operation.source} -> ${operation.backup}`)
+    );
   }
 
   private printList(label: string, values: string[]): void {
     this.output.appendLine(`${label}:`);
 
     if (values.length === 0) {
-      this.output.appendLine("  - none");
+      this.output.appendLine("  - 无");
       return;
     }
 
@@ -41,8 +55,7 @@ async function defaultConfirmation(plan: OperationPlan): Promise<boolean> {
   const choice = await vscode.window.showInformationMessage(
     plan.summary,
     { modal: true },
-    "Apply",
-    "Cancel"
+    "应用"
   );
-  return choice === "Apply";
+  return choice === "应用";
 }

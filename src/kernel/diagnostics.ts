@@ -22,6 +22,16 @@ export class DiagnosticsService {
     this.items.delete(workspaceFolderPath);
   }
 
+  public clearMatching(workspaceFolderPath: string, predicate: (item: DiagnosticItem) => boolean): void {
+    const remaining = (this.items.get(workspaceFolderPath) ?? []).filter((item) => !predicate(item));
+    if (remaining.length === 0) {
+      this.items.delete(workspaceFolderPath);
+      return;
+    }
+
+    this.items.set(workspaceFolderPath, remaining);
+  }
+
   public getForWorkspace(workspaceFolderPath: string): DiagnosticItem[] {
     return [...(this.items.get(workspaceFolderPath) ?? [])];
   }
@@ -33,18 +43,18 @@ export class DiagnosticsService {
   public print(workspaceFolderPath?: string): void {
     const items = workspaceFolderPath ? this.getForWorkspace(workspaceFolderPath) : this.getAll();
 
-    this.output.appendLine("LoreDock diagnostics");
+    this.output.appendLine("LoreDock 诊断");
     this.output.appendLine("====================");
 
     if (items.length === 0) {
-      this.output.appendLine("No diagnostics.");
+      this.output.appendLine("没有诊断。");
       return;
     }
 
     for (const item of items) {
       const location = item.relativePath ? `${item.workspaceFolder}/${item.relativePath}` : item.workspaceFolder;
       this.output.appendLine(`[${item.severity}] ${item.code}: ${item.message}`);
-      this.output.appendLine(`  workspace: ${location}`);
+      this.output.appendLine(`  工作区：${location}`);
     }
   }
 }
