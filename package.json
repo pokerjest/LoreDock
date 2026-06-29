@@ -19,7 +19,13 @@
     "onCommand:loredock.showDiagnostics",
     "onCommand:loredock.repairProjectManifest",
     "onCommand:loredock.enableManuscript",
-    "onView:loredock.manuscript.tree"
+    "onCommand:loredock.enableStoryBible",
+    "onCommand:loredock.storyBible.openGallery",
+    "onCommand:loredock.storyBible.createCard",
+    "onCommand:loredock.storyBible.searchCards",
+    "onCommand:loredock.storyBible.defineKeyword",
+    "onView:loredock.manuscript.tree",
+    "onView:loredock.storyBible.tree"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -144,6 +150,106 @@
         "command": "loredock.manuscript.showStats",
         "title": "LoreDock：手稿统计",
         "icon": "$(graph)"
+      },
+      {
+        "command": "loredock.enableStoryBible",
+        "title": "LoreDock：启用 Story Bible",
+        "icon": "$(add)"
+      },
+      {
+        "command": "loredock.storyBible.openGallery",
+        "title": "LoreDock：打开 Story Bible 卡牌库",
+        "icon": "$(preview)"
+      },
+      {
+        "command": "loredock.storyBible.createCard",
+        "title": "LoreDock：新建 Story Bible Card",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "loredock.storyBible.createCharacter",
+        "title": "LoreDock：新建人物",
+        "icon": "$(person)"
+      },
+      {
+        "command": "loredock.storyBible.createLocation",
+        "title": "LoreDock：新建地点",
+        "icon": "$(location)"
+      },
+      {
+        "command": "loredock.storyBible.createRule",
+        "title": "LoreDock：新建规则",
+        "icon": "$(law)"
+      },
+      {
+        "command": "loredock.storyBible.openCard",
+        "title": "LoreDock：打开/编辑 Card",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "loredock.storyBible.renameCard",
+        "title": "LoreDock：重命名 Card"
+      },
+      {
+        "command": "loredock.storyBible.editCardMetadata",
+        "title": "LoreDock：编辑 Card 元数据"
+      },
+      {
+        "command": "loredock.storyBible.deleteCard",
+        "title": "LoreDock：删除 Card"
+      },
+      {
+        "command": "loredock.storyBible.searchCards",
+        "title": "LoreDock：搜索 Story Bible",
+        "icon": "$(search)"
+      },
+      {
+        "command": "loredock.storyBible.createCardFromSelection",
+        "title": "LoreDock：从选中文本创建 Card",
+        "icon": "$(selection)"
+      },
+      {
+        "command": "loredock.storyBible.browseKeywords",
+        "title": "LoreDock：浏览关键词",
+        "icon": "$(symbol-keyword)"
+      },
+      {
+        "command": "loredock.storyBible.defineKeyword",
+        "title": "LoreDock：定义关键词",
+        "icon": "$(tag)"
+      },
+      {
+        "command": "loredock.storyBible.openKeywordDefinition",
+        "title": "LoreDock：打开关键词定义",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "loredock.storyBible.editKeywordDefinition",
+        "title": "LoreDock：编辑关键词定义"
+      },
+      {
+        "command": "loredock.storyBible.deleteKeywordDefinition",
+        "title": "LoreDock：删除关键词定义"
+      },
+      {
+        "command": "loredock.storyBible.restoreTrashItem",
+        "title": "LoreDock：还原资源垃圾桶项目",
+        "icon": "$(history)"
+      },
+      {
+        "command": "loredock.storyBible.permanentlyDeleteTrashItem",
+        "title": "LoreDock：永久删除资源垃圾桶项目",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "loredock.storyBible.refreshTree",
+        "title": "LoreDock：刷新 Story Bible",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "loredock.storyBible.toggleTrash",
+        "title": "LoreDock：切换 Story Bible 资源垃圾桶",
+        "icon": "$(trash)"
       }
     ],
     "viewsContainers": {
@@ -160,6 +266,10 @@
         {
           "id": "loredock.manuscript.tree",
           "name": "手稿"
+        },
+        {
+          "id": "loredock.storyBible.tree",
+          "name": "Story Bible"
         }
       ]
     },
@@ -188,6 +298,41 @@
         {
           "command": "loredock.manuscript.refreshTree",
           "when": "view == loredock.manuscript.tree",
+          "group": "navigation"
+        },
+        {
+          "command": "loredock.enableStoryBible",
+          "when": "view == loredock.storyBible.tree && !loredock.storyBible.active",
+          "group": "navigation"
+        },
+        {
+          "command": "loredock.storyBible.openGallery",
+          "when": "view == loredock.storyBible.tree && loredock.storyBible.active && !loredock.storyBible.trashMode",
+          "group": "navigation"
+        },
+        {
+          "command": "loredock.storyBible.createCard",
+          "when": "view == loredock.storyBible.tree && loredock.storyBible.active && !loredock.storyBible.trashMode",
+          "group": "navigation"
+        },
+        {
+          "command": "loredock.storyBible.searchCards",
+          "when": "view == loredock.storyBible.tree && loredock.storyBible.active && !loredock.storyBible.trashMode",
+          "group": "navigation"
+        },
+        {
+          "command": "loredock.storyBible.defineKeyword",
+          "when": "view == loredock.storyBible.tree && loredock.storyBible.active && !loredock.storyBible.trashMode",
+          "group": "navigation"
+        },
+        {
+          "command": "loredock.storyBible.toggleTrash",
+          "when": "view == loredock.storyBible.tree && loredock.storyBible.active",
+          "group": "navigation"
+        },
+        {
+          "command": "loredock.storyBible.refreshTree",
+          "when": "view == loredock.storyBible.tree",
           "group": "navigation"
         }
       ],
@@ -266,6 +411,66 @@
         {
           "command": "loredock.manuscript.openNotes",
           "when": "view == loredock.manuscript.tree && viewItem == loredock.manuscript.notes"
+        },
+        {
+          "command": "loredock.storyBible.createCharacter",
+          "when": "view == loredock.storyBible.tree && viewItem == loredock.storyBible.group.character",
+          "group": "inline"
+        },
+        {
+          "command": "loredock.storyBible.createLocation",
+          "when": "view == loredock.storyBible.tree && viewItem == loredock.storyBible.group.location",
+          "group": "inline"
+        },
+        {
+          "command": "loredock.storyBible.createRule",
+          "when": "view == loredock.storyBible.tree && viewItem == loredock.storyBible.group.rule",
+          "group": "inline"
+        },
+        {
+          "command": "loredock.storyBible.defineKeyword",
+          "when": "view == loredock.storyBible.tree && viewItem == loredock.storyBible.group.keyword",
+          "group": "inline"
+        },
+        {
+          "command": "loredock.storyBible.openCard",
+          "when": "view == loredock.storyBible.tree && viewItem == loredock.storyBible.card",
+          "group": "inline"
+        },
+        {
+          "command": "loredock.storyBible.renameCard",
+          "when": "view == loredock.storyBible.tree && viewItem == loredock.storyBible.card"
+        },
+        {
+          "command": "loredock.storyBible.editCardMetadata",
+          "when": "view == loredock.storyBible.tree && viewItem == loredock.storyBible.card"
+        },
+        {
+          "command": "loredock.storyBible.deleteCard",
+          "when": "view == loredock.storyBible.tree && viewItem == loredock.storyBible.card"
+        },
+        {
+          "command": "loredock.storyBible.openKeywordDefinition",
+          "when": "view == loredock.storyBible.tree && viewItem == loredock.storyBible.keywordDefinition",
+          "group": "inline"
+        },
+        {
+          "command": "loredock.storyBible.editKeywordDefinition",
+          "when": "view == loredock.storyBible.tree && viewItem == loredock.storyBible.keywordDefinition"
+        },
+        {
+          "command": "loredock.storyBible.deleteKeywordDefinition",
+          "when": "view == loredock.storyBible.tree && viewItem == loredock.storyBible.keywordDefinition"
+        },
+        {
+          "command": "loredock.storyBible.restoreTrashItem",
+          "when": "view == loredock.storyBible.tree && viewItem == loredock.storyBible.trashItem",
+          "group": "inline"
+        },
+        {
+          "command": "loredock.storyBible.permanentlyDeleteTrashItem",
+          "when": "view == loredock.storyBible.tree && viewItem == loredock.storyBible.trashItem",
+          "group": "inline@1"
         }
       ]
     }
