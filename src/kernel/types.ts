@@ -30,11 +30,18 @@ export interface OperationPlan {
   directoriesToCreate: string[];
   filesToCreate: string[];
   filesToModify: string[];
+  fileContentPreviews?: FileContentPreview[];
   filesToMove?: FileMoveOperation[];
   filesToDelete?: string[];
   filesToBackup?: FileBackupOperation[];
   directoriesToMove?: FileMoveOperation[];
   directoriesToDelete?: string[];
+}
+
+export interface FileContentPreview {
+  relativePath: string;
+  title: string;
+  content: string;
 }
 
 export interface FileMoveOperation {

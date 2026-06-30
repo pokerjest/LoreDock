@@ -153,17 +153,17 @@
       },
       {
         "command": "loredock.enableStoryBible",
-        "title": "LoreDock：启用 Story Bible",
+        "title": "LoreDock：启用故事圣经",
         "icon": "$(add)"
       },
       {
         "command": "loredock.storyBible.openGallery",
-        "title": "LoreDock：打开 Story Bible 卡牌库",
+        "title": "LoreDock：打开故事圣经条目库",
         "icon": "$(preview)"
       },
       {
         "command": "loredock.storyBible.createCard",
-        "title": "LoreDock：新建 Story Bible Card",
+        "title": "LoreDock：新建故事圣经条目",
         "icon": "$(new-file)"
       },
       {
@@ -183,29 +183,29 @@
       },
       {
         "command": "loredock.storyBible.openCard",
-        "title": "LoreDock：打开/编辑 Card",
+        "title": "LoreDock：打开/编辑条目",
         "icon": "$(edit)"
       },
       {
         "command": "loredock.storyBible.renameCard",
-        "title": "LoreDock：重命名 Card"
+        "title": "LoreDock：重命名条目"
       },
       {
         "command": "loredock.storyBible.editCardMetadata",
-        "title": "LoreDock：编辑 Card 元数据"
+        "title": "LoreDock：编辑条目元数据"
       },
       {
         "command": "loredock.storyBible.deleteCard",
-        "title": "LoreDock：删除 Card"
+        "title": "LoreDock：删除条目"
       },
       {
         "command": "loredock.storyBible.searchCards",
-        "title": "LoreDock：搜索 Story Bible",
+        "title": "LoreDock：搜索故事圣经",
         "icon": "$(search)"
       },
       {
         "command": "loredock.storyBible.createCardFromSelection",
-        "title": "LoreDock：从选中文本创建 Card",
+        "title": "LoreDock：从选中文本创建条目",
         "icon": "$(selection)"
       },
       {
@@ -243,12 +243,12 @@
       },
       {
         "command": "loredock.storyBible.refreshTree",
-        "title": "LoreDock：刷新 Story Bible",
+        "title": "LoreDock：刷新故事圣经",
         "icon": "$(refresh)"
       },
       {
         "command": "loredock.storyBible.toggleTrash",
-        "title": "LoreDock：切换 Story Bible 资源垃圾桶",
+        "title": "LoreDock：切换故事圣经资源垃圾桶",
         "icon": "$(trash)"
       }
     ],
@@ -269,7 +269,7 @@
         },
         {
           "id": "loredock.storyBible.tree",
-          "name": "Story Bible"
+          "name": "故事圣经"
         }
       ]
     },

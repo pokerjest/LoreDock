@@ -1,6 +1,7 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as vscode from "vscode";
+import { registerExclusiveCommand } from "../../kernel/commandRegistry";
 import { validateProjectManifest } from "../../kernel/manifest";
 import { SafeFileWriter } from "../../kernel/safeFileWriter";
 import { inspectExistingWorkspacePath } from "../../kernel/safeWorkspacePath";
@@ -131,13 +132,13 @@ function acquireSharedTreeRegistration(context: KernelContext, tree: ManuscriptT
   }
 
   if (!sharedRefreshCommandRegistration) {
-    sharedRefreshCommandRegistration = vscode.commands.registerCommand("loredock.manuscript.refreshTree", () =>
+    sharedRefreshCommandRegistration = registerExclusiveCommand("loredock.manuscript.refreshTree", () =>
       refreshManuscriptTree(tree)
     );
   }
 
   if (!sharedToggleTrashCommandRegistration) {
-    sharedToggleTrashCommandRegistration = vscode.commands.registerCommand("loredock.manuscript.toggleTrash", async () => {
+    sharedToggleTrashCommandRegistration = registerExclusiveCommand("loredock.manuscript.toggleTrash", async () => {
       tree.toggleTrashMode();
       await refreshManuscriptTree(tree);
     });

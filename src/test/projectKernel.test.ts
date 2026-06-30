@@ -4,6 +4,7 @@ import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import { manuscriptCapability } from "../capabilities/manuscript/capability";
+import { storyBibleCapability } from "../capabilities/storyBible/capability";
 import { ProjectKernel } from "../kernel/projectKernel";
 import type { Capability, DiagnosticItem, OperationPlan } from "../kernel/types";
 
@@ -389,6 +390,43 @@ suite("ProjectKernel", function () {
     }
   });
 
+  test("restores bootstrap command handler after active handler is disposed", async () => {
+    await writeManifest(workspace, "test.stackedCommandCapability");
+
+    const invoked: string[] = [];
+    const capability: Capability = {
+      id: "test.stackedCommandCapability",
+      bootstrap(context) {
+        return [
+          context.registerCommand("loredock.test.stackedCommand", () => {
+            invoked.push("bootstrap");
+          })
+        ];
+      },
+      activate(context) {
+        return [
+          context.registerCommand("loredock.test.stackedCommand", () => {
+            invoked.push("active");
+          })
+        ];
+      }
+    };
+    const kernel = createKernel({ capabilities: [capability] });
+
+    try {
+      await kernel.refreshWorkspaceFolder(workspaceFolder);
+      await vscode.commands.executeCommand("loredock.test.stackedCommand", workspaceFolder);
+
+      await fs.writeFile(path.join(workspace, ".loredock/project.json"), "{broken", "utf8");
+      await kernel.refreshWorkspaceFolder(workspaceFolder);
+      await vscode.commands.executeCommand("loredock.test.stackedCommand", workspaceFolder);
+
+      assert.deepEqual(invoked, ["active", "bootstrap"]);
+    } finally {
+      kernel.dispose();
+    }
+  });
+
   test("retries capability command dispatch after refreshing an empty route", async () => {
     const command = "loredock.test.lazyBootstrapCommand";
     const kernel = createKernel({});
@@ -403,13 +441,13 @@ suite("ProjectKernel", function () {
     });
     replaceRefreshAllWorkspaceFolders(kernel, async () => {
       refreshed = true;
-      routes.get(command)?.handlers.set(workspace, {
+      routes.get(command)?.handlers.set(workspace, [{
         workspaceFolder,
         callback: () => {
           invoked = true;
           return "ok";
         }
-      });
+      }]);
     });
 
     try {
@@ -534,6 +572,113 @@ suite("ProjectKernel", function () {
       kernel.dispose();
     }
   });
+
+  test("storyBible commands prompt instead of writing before Story Bible is enabled", async () => {
+    const seenPlans: OperationPlan[] = [];
+    const kernel = createKernel({
+      capabilities: [storyBibleCapability],
+      confirm: async (plan) => {
+        seenPlans.push(plan);
+        return true;
+      },
+      now: () => new Date("2026-06-29T00:00:00.000Z")
+    });
+
+    try {
+      await kernel.initProject(workspaceFolder);
+      await vscode.commands.executeCommand("loredock.storyBible.createCardFromSelection", workspaceFolder);
+
+      assert.equal(await exists(path.join(workspace, "lore")), false);
+      assert.equal(seenPlans.length, 1);
+      assert.equal(seenPlans[0].summary, "初始化 LoreDock 项目。");
+    } finally {
+      kernel.dispose();
+    }
+  });
+
+  test("enableStoryBible creates lore directories and enables the capability", async () => {
+    const seenPlans: OperationPlan[] = [];
+    const kernel = createKernel({
+      capabilities: [storyBibleCapability],
+      confirm: async (plan) => {
+        seenPlans.push(plan);
+        return true;
+      },
+      now: () => new Date("2026-06-29T00:00:00.000Z")
+    });
+
+    try {
+      await kernel.initProject(workspaceFolder);
+      await vscode.commands.executeCommand("loredock.enableStoryBible", workspaceFolder);
+
+      assert.equal(await exists(path.join(workspace, "lore/characters")), true);
+      assert.equal(await exists(path.join(workspace, "lore/locations")), true);
+      assert.equal(await exists(path.join(workspace, "lore/rules")), true);
+      assert.equal(await exists(path.join(workspace, "lore/tags")), true);
+
+      const projectManifest = JSON.parse(await fs.readFile(path.join(workspace, ".loredock/project.json"), "utf8"));
+      assert.equal(projectManifest.updatedAt, "2026-06-29T00:00:00.000Z");
+      assert.equal(projectManifest.capabilities.includes("story-bible.core"), true);
+      assert.equal(seenPlans.some((plan) => plan.summary.includes("启用故事圣经")), true);
+    } finally {
+      kernel.dispose();
+    }
+  });
+
+  test("enableStoryBible cancellation writes no lore files or capability", async () => {
+    const seenPlans: OperationPlan[] = [];
+    const kernel = createKernel({
+      capabilities: [storyBibleCapability],
+      confirm: async (plan) => {
+        seenPlans.push(plan);
+        return !plan.summary.includes("启用故事圣经");
+      },
+      now: () => new Date("2026-06-29T00:00:00.000Z")
+    });
+
+    try {
+      await kernel.initProject(workspaceFolder);
+      await vscode.commands.executeCommand("loredock.enableStoryBible", workspaceFolder);
+
+      const projectManifest = JSON.parse(await fs.readFile(path.join(workspace, ".loredock/project.json"), "utf8"));
+      assert.equal(projectManifest.capabilities.includes("story-bible.core"), false);
+      assert.equal(await exists(path.join(workspace, "lore")), false);
+    } finally {
+      kernel.dispose();
+    }
+  });
+
+  test("enableStoryBible recovers existing lore directories and repeated enable is conservative", async () => {
+    const seenPlans: OperationPlan[] = [];
+    const kernel = createKernel({
+      capabilities: [storyBibleCapability],
+      confirm: async (plan) => {
+        seenPlans.push(plan);
+        return true;
+      },
+      now: () => new Date("2026-06-29T00:00:00.000Z")
+    });
+
+    try {
+      await kernel.initProject(workspaceFolder);
+      await fs.mkdir(path.join(workspace, "lore/characters"), { recursive: true });
+      await fs.mkdir(path.join(workspace, "lore/locations"), { recursive: true });
+      await fs.mkdir(path.join(workspace, "lore/rules"), { recursive: true });
+      await fs.mkdir(path.join(workspace, "lore/tags"), { recursive: true });
+
+      await vscode.commands.executeCommand("loredock.enableStoryBible", workspaceFolder);
+      await vscode.commands.executeCommand("loredock.enableStoryBible", workspaceFolder);
+
+      const projectManifest = JSON.parse(await fs.readFile(path.join(workspace, ".loredock/project.json"), "utf8"));
+      assert.equal(
+        projectManifest.capabilities.filter((capability: string) => capability === "story-bible.core").length,
+        1
+      );
+      assert.equal(seenPlans.filter((plan) => plan.summary === "启用现有故事圣经。").length, 1);
+    } finally {
+      kernel.dispose();
+    }
+  });
 });
 
 function createKernel(options: {
@@ -587,7 +732,7 @@ function getCapabilityCommandRoutes(kernel: ProjectKernel): Map<
   string,
   {
     disposable: vscode.Disposable;
-    handlers: Map<string, { workspaceFolder: vscode.WorkspaceFolder; callback: (...args: unknown[]) => unknown }>;
+    handlers: Map<string, { workspaceFolder: vscode.WorkspaceFolder; callback: (...args: unknown[]) => unknown }[]>;
     persistent: boolean;
   }
 > {
@@ -597,7 +742,7 @@ function getCapabilityCommandRoutes(kernel: ProjectKernel): Map<
         string,
         {
           disposable: vscode.Disposable;
-          handlers: Map<string, { workspaceFolder: vscode.WorkspaceFolder; callback: (...args: unknown[]) => unknown }>;
+          handlers: Map<string, { workspaceFolder: vscode.WorkspaceFolder; callback: (...args: unknown[]) => unknown }[]>;
           persistent: boolean;
         }
       >;

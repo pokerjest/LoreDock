@@ -35,6 +35,7 @@ export class PreviewApplyService {
       "将备份的文件",
       (plan.filesToBackup ?? []).map((operation) => `${operation.source} -> ${operation.backup}`)
     );
+    this.printContentPreviews(plan);
   }
 
   private printList(label: string, values: string[]): void {
@@ -47,6 +48,21 @@ export class PreviewApplyService {
 
     for (const value of values) {
       this.output.appendLine(`  - ${value}`);
+    }
+  }
+
+  private printContentPreviews(plan: OperationPlan): void {
+    const previews = plan.fileContentPreviews ?? [];
+    if (previews.length === 0) {
+      return;
+    }
+
+    this.output.appendLine("文件内容预览:");
+    for (const preview of previews) {
+      this.output.appendLine(`  - ${preview.title}: ${preview.relativePath}`);
+      for (const line of preview.content.split(/\r?\n/)) {
+        this.output.appendLine(`    ${line}`);
+      }
     }
   }
 }

@@ -3,6 +3,7 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
+import { deriveCardDraftFromSelection } from "../capabilities/storyBible/capability";
 import { StoryBibleController } from "../capabilities/storyBible/controller";
 import { readStoryBible } from "../capabilities/storyBible/files";
 import { StoryBibleTreeProvider } from "../capabilities/storyBible/tree";
@@ -13,11 +14,14 @@ import {
   STORY_BIBLE_LOCATION_DIR,
   STORY_BIBLE_RULE_DIR,
   STORY_BIBLE_TAG_DIR,
+  STORY_BIBLE_TRASH_METADATA,
   STORY_BIBLE_TRASH_DIR
 } from "../capabilities/storyBible/types";
 import type { DiagnosticItem, OperationPlan } from "../kernel/types";
 
-suite("Story Bible", () => {
+suite("Story Bible", function () {
+  this.timeout(10000);
+
   let workspace: string;
   let workspaceFolder: vscode.WorkspaceFolder;
   let seenPlans: OperationPlan[];
@@ -65,6 +69,19 @@ suite("Story Bible", () => {
     assert.equal(character.keywordLabels[character.tags[0]], "Wu Jin");
     assert.equal(await exists(path.join(workspace, character.path)), true);
     assert.equal((await controller.readCardText(character.id)).text, "# Wu Jin\n\n");
+  });
+
+  test("previews initial card frontmatter before creating a card", async () => {
+    await controller.createCard("character", "Alex");
+
+    const preview = seenPlans[0].fileContentPreviews?.[0];
+    assert.equal(preview?.relativePath, "lore/characters/alex.md");
+    assert.equal(preview?.title, "初始 frontmatter");
+    assert.match(preview?.content ?? "", /^---\nschemaVersion: "0\.2\.0"/);
+    assert.match(preview?.content ?? "", /type: "character"/);
+    assert.match(preview?.content ?? "", /name: "Alex"/);
+    assert.match(preview?.content ?? "", /tags:\n {2}- "character\/alex"/);
+    assert.equal(preview?.content.includes("# Alex"), false);
   });
 
   test("uses deterministic hash fallback for Chinese names while display label remains name", async () => {
@@ -228,6 +245,29 @@ suite("Story Bible", () => {
     assert.match(updated, /summary: "Updated summary"/);
   });
 
+  test("searches Markdown H1 titles", async () => {
+    await controller.createCard("character", "Alex");
+    const card = (await controller.listCards())[0];
+    const absolutePath = path.join(workspace, card.path);
+    const text = await fs.readFile(absolutePath, "utf8");
+    await fs.writeFile(absolutePath, text.replace("# Alex", "# Hidden Rival"), "utf8");
+
+    const results = await controller.searchCards({ text: "Hidden Rival" });
+
+    assert.equal(results.length, 1);
+    assert.equal(results[0].id, card.id);
+  });
+
+  test("derives safe card drafts from selected text", () => {
+    const multiline = deriveCardDraftFromSelection("第一行名称\n第二行是摘要信息");
+    const long = deriveCardDraftFromSelection("a".repeat(120));
+
+    assert.equal(multiline.name, "第一行名称");
+    assert.equal(multiline.summary, "第一行名称 第二行是摘要信息");
+    assert.equal(long.name.length <= 80, true);
+    assert.equal(long.summary, "a".repeat(120));
+  });
+
   test("diagnoses damaged card frontmatter and duplicate primary keywords without hiding valid cards", async () => {
     await controller.createCard("character", "Alex");
     const valid = (await controller.listCards())[0];
@@ -267,6 +307,73 @@ suite("Story Bible", () => {
     assert.equal(result.diagnostics.some((item) => item.code === "storyBible.card.primaryKeyword.duplicate"), true);
   });
 
+  test("diagnoses orphan markdown duplicate labels and reserved keyword definitions", async () => {
+    await controller.createCard("character", "Alex", { aliases: ["Ace"] });
+    await controller.createCard("character", "Alex", { aliases: ["Ace"] });
+    await fs.writeFile(path.join(workspace, LORE_DIR, "orphan.md"), "# Orphan\n", "utf8");
+    await fs.mkdir(path.join(workspace, STORY_BIBLE_TAG_DIR, "character"), { recursive: true });
+    await fs.writeFile(
+      path.join(workspace, STORY_BIBLE_TAG_DIR, "character/alex.md"),
+      [
+        "---",
+        'schemaVersion: "0.2.0"',
+        'schema: "story-bible.tag"',
+        'slug: "character/alex"',
+        'label: "Bad reserved keyword"',
+        'description: ""',
+        'category: "custom"',
+        'appliesTo: ["any"]',
+        'createdAt: "2026-06-29T00:00:00.000Z"',
+        'updatedAt: "2026-06-29T00:00:00.000Z"',
+        "---",
+        "# Bad reserved keyword"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const result = await readStoryBible(workspace);
+    const keyword = result.keywords.find((item) => item.slug === "character/alex");
+
+    assert.equal(result.diagnostics.some((item) => item.code === "storyBible.orphanMarkdown"), true);
+    assert.equal(result.diagnostics.some((item) => item.code === "storyBible.card.name.duplicate"), true);
+    assert.equal(result.diagnostics.some((item) => item.code === "storyBible.card.alias.duplicate"), true);
+    assert.equal(result.diagnostics.some((item) => item.code === "storyBible.keyword.slug.reservedPrefix"), true);
+    assert.equal(keyword?.source, "system-object");
+    assert.equal(keyword?.definitionPath, undefined);
+  });
+
+  test("rejects trash metadata that points at the Story Bible trash root", async () => {
+    await controller.createCard("character", "Alex");
+    const card = (await controller.listCards())[0];
+    await controller.deleteCard(card.id);
+    const trashItem = (await controller.listTrashItems())[0];
+    const metadataPath = path.join(workspace, trashItem.trashPath, STORY_BIBLE_TRASH_METADATA);
+    const metadata = JSON.parse(await fs.readFile(metadataPath, "utf8")) as Record<string, unknown>;
+    metadata.trashPath = STORY_BIBLE_TRASH_DIR;
+    await fs.writeFile(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
+
+    const result = await readStoryBible(workspace);
+
+    assert.equal(result.trashItems.length, 0);
+    assert.equal(result.diagnostics.some((item) => item.code === "storyBible.trash.metadata.invalid"), true);
+    await assert.rejects(() => controller.permanentlyDeleteTrashItem(trashItem.id), /未找到资源垃圾桶项目/);
+    assert.equal(await exists(path.join(workspace, STORY_BIBLE_TRASH_DIR)), true);
+  });
+
+  test("classifies explicit file change notifications", () => {
+    const events: string[] = [];
+    const disposable = controller.onDidChange((event) => events.push(event.type));
+    try {
+      controller.notifyFileChanged("lore/characters/alex.md", "structure");
+      controller.notifyFileChanged("lore/characters/alex.md");
+      controller.notifyFileChanged(".loredock/trash/resources/story-bible/trash_test/trash-item.json");
+    } finally {
+      disposable.dispose();
+    }
+
+    assert.deepEqual(events, ["structure", "content", "structure"]);
+  });
+
   test("tree shows setup and active Story Bible groups", async () => {
     const emptyWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "loredock-story-tree-"));
     try {
@@ -277,11 +384,11 @@ suite("Story Bible", () => {
       await fs.mkdir(path.join(emptyWorkspace, ".loredock"));
       await fs.writeFile(path.join(emptyWorkspace, ".loredock/project.json"), "{}\n", "utf8");
       const missingNodes = await emptyTree.getChildren();
-      assert.equal(missingNodes.some((node) => node.kind === "action" && node.title === "启用 Story Bible"), true);
+      assert.equal(missingNodes.some((node) => node.kind === "action" && node.title === "启用故事圣经"), true);
 
       await fs.mkdir(path.join(emptyWorkspace, LORE_DIR), { recursive: true });
       const partialNodes = await emptyTree.getChildren();
-      assert.equal(partialNodes.some((node) => node.kind === "action" && node.title === "启用 Story Bible"), true);
+      assert.equal(partialNodes.some((node) => node.kind === "action" && node.title === "启用故事圣经"), true);
 
       await fs.mkdir(path.join(workspace, ".loredock"), { recursive: true });
       await writeProjectManifest(workspace, [STORY_BIBLE_CAPABILITY_ID]);

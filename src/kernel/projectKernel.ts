@@ -1,6 +1,7 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as vscode from "vscode";
+import { registerExclusiveCommand } from "./commandRegistry";
 import { DiagnosticsService } from "./diagnostics";
 import {
   createDefaultManifest,
@@ -25,7 +26,7 @@ interface ProjectKernelOptions {
 
 interface RoutedCommand {
   disposable: vscode.Disposable;
-  handlers: Map<string, RoutedCommandHandler>;
+  handlers: Map<string, RoutedCommandHandler[]>;
   persistent: boolean;
 }
 
@@ -53,6 +54,7 @@ export class ProjectKernel implements vscode.Disposable {
   private readonly capabilityServices = new Map<string, Map<string, unknown>>();
   private readonly subscriptions: vscode.Disposable[] = [];
   private readonly now: () => Date;
+  private disposed = false;
 
   public constructor(
     private readonly extensionContext: vscode.ExtensionContext,
@@ -97,6 +99,7 @@ export class ProjectKernel implements vscode.Disposable {
   }
 
   public dispose(): void {
+    this.disposed = true;
     for (const folderDisposables of this.activeCapabilities.values()) {
       for (const disposables of folderDisposables.values()) {
         disposeAll(disposables, (error) => this.reportDisposeError(error));
@@ -253,6 +256,9 @@ export class ProjectKernel implements vscode.Disposable {
   }
 
   public async refreshAllWorkspaceFolders(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
     const folders = vscode.workspace.workspaceFolders ?? [];
     for (const folder of folders) {
       await this.refreshWorkspaceFolderSafely(folder);
@@ -260,6 +266,9 @@ export class ProjectKernel implements vscode.Disposable {
   }
 
   public async refreshWorkspaceFolder(workspaceFolder: vscode.WorkspaceFolder): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
     this.diagnostics.clear(workspaceFolder.uri.fsPath);
     this.activateBootstraps(workspaceFolder);
 
@@ -497,8 +506,11 @@ export class ProjectKernel implements vscode.Disposable {
   ): vscode.Disposable {
     const folderKey = workspaceFolder.uri.fsPath;
     const route = this.ensureCapabilityCommandRoute(command);
+    const handler: RoutedCommandHandler = { workspaceFolder, callback };
+    const handlers = route.handlers.get(folderKey) ?? [];
 
-    route.handlers.set(folderKey, { workspaceFolder, callback });
+    handlers.push(handler);
+    route.handlers.set(folderKey, handlers);
 
     let disposed = false;
     return {
@@ -513,7 +525,13 @@ export class ProjectKernel implements vscode.Disposable {
           return;
         }
 
-        currentRoute.handlers.delete(folderKey);
+        const currentHandlers = currentRoute.handlers.get(folderKey) ?? [];
+        const remainingHandlers = currentHandlers.filter((candidate) => candidate !== handler);
+        if (remainingHandlers.length === 0) {
+          currentRoute.handlers.delete(folderKey);
+        } else {
+          currentRoute.handlers.set(folderKey, remainingHandlers);
+        }
         if (currentRoute.handlers.size === 0 && !currentRoute.persistent) {
           try {
             currentRoute.disposable.dispose();
@@ -526,6 +544,9 @@ export class ProjectKernel implements vscode.Disposable {
   }
 
   private async dispatchCapabilityCommand(command: string, args: unknown[]): Promise<unknown> {
+    if (this.disposed) {
+      return undefined;
+    }
     let route = this.capabilityCommandRoutes.get(command);
     if (!route || route.handlers.size === 0) {
       await this.refreshAllWorkspaceFolders();
@@ -539,26 +560,29 @@ export class ProjectKernel implements vscode.Disposable {
 
     const explicitFolder = asWorkspaceFolder(args[0]) ?? asWorkspaceFolderFromNode(args[0]);
     if (explicitFolder) {
-      const handler = route.handlers.get(explicitFolder.uri.fsPath);
+      const handler = lastHandler(route.handlers.get(explicitFolder.uri.fsPath));
       if (handler) {
         return handler.callback(...args);
       }
     }
 
     if (route.handlers.size === 1) {
-      const handler = route.handlers.values().next().value;
+      const handler = lastHandler(route.handlers.values().next().value);
       return handler?.callback(...args);
     }
 
     const workspaceFolder = await this.getTargetWorkspaceFolder(
-      [...route.handlers.values()].map((handler) => handler.workspaceFolder)
+      [...route.handlers.values()].flatMap((handlers) => {
+        const handler = lastHandler(handlers);
+        return handler ? [handler.workspaceFolder] : [];
+      })
     );
     if (!workspaceFolder) {
       this.output.appendLine(`LoreDock 命令 "${command}" 已取消：未选择工作区文件夹。`);
       return undefined;
     }
 
-    const handler = route.handlers.get(workspaceFolder.uri.fsPath);
+    const handler = lastHandler(route.handlers.get(workspaceFolder.uri.fsPath));
     if (!handler) {
       this.output.appendLine(`LoreDock 命令 "${command}" 没有对应 ${workspaceFolder.uri.fsPath} 的处理器。`);
       return undefined;
@@ -568,7 +592,7 @@ export class ProjectKernel implements vscode.Disposable {
   }
 
   private registerCommand(command: string, callback: (...args: unknown[]) => unknown): vscode.Disposable {
-    return vscode.commands.registerCommand(command, async (...args: unknown[]) => {
+    return registerExclusiveCommand(command, async (...args: unknown[]) => {
       try {
         await callback(...args);
       } catch (error) {
@@ -643,6 +667,9 @@ export class ProjectKernel implements vscode.Disposable {
   }
 
   private handleWorkspaceFoldersChanged(event: vscode.WorkspaceFoldersChangeEvent): void {
+    if (this.disposed) {
+      return;
+    }
     for (const folder of event.removed) {
       this.disposeWorkspaceFolder(folder);
     }
@@ -756,6 +783,10 @@ async function pathExists(absolutePath: string): Promise<boolean> {
 
 function isNotFound(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+function lastHandler(handlers: RoutedCommandHandler[] | undefined): RoutedCommandHandler | undefined {
+  return handlers?.[handlers.length - 1];
 }
 
 function asWorkspaceFolder(value: unknown): vscode.WorkspaceFolder | undefined {

@@ -1,6 +1,7 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as vscode from "vscode";
+import { registerExclusiveCommand } from "../../kernel/commandRegistry";
 import { validateProjectManifest } from "../../kernel/manifest";
 import { SafeFileWriter } from "../../kernel/safeFileWriter";
 import { inspectExistingWorkspacePath } from "../../kernel/safeWorkspacePath";
@@ -30,6 +31,7 @@ import {
   STORY_BIBLE_VISIBILITIES,
   type StoryBibleCardId,
   type StoryBibleCardType,
+  type StoryBibleChangeType,
   type StoryBibleStatus,
   type StoryBibleTrashItemId,
   type StoryBibleVisibility
@@ -38,6 +40,26 @@ import {
 const VIEW_ID = "loredock.storyBible.tree";
 const STORY_BIBLE_ACTIVE_CONTEXT = "loredock.storyBible.active";
 const STORY_BIBLE_TRASH_MODE_CONTEXT = "loredock.storyBible.trashMode";
+const STORY_BIBLE_DISABLED_COMMANDS = [
+  "loredock.storyBible.openGallery",
+  "loredock.storyBible.createCard",
+  "loredock.storyBible.createCharacter",
+  "loredock.storyBible.createLocation",
+  "loredock.storyBible.createRule",
+  "loredock.storyBible.openCard",
+  "loredock.storyBible.renameCard",
+  "loredock.storyBible.editCardMetadata",
+  "loredock.storyBible.deleteCard",
+  "loredock.storyBible.searchCards",
+  "loredock.storyBible.createCardFromSelection",
+  "loredock.storyBible.browseKeywords",
+  "loredock.storyBible.defineKeyword",
+  "loredock.storyBible.openKeywordDefinition",
+  "loredock.storyBible.editKeywordDefinition",
+  "loredock.storyBible.deleteKeywordDefinition",
+  "loredock.storyBible.restoreTrashItem",
+  "loredock.storyBible.permanentlyDeleteTrashItem"
+];
 
 const sharedTreeWorkspaces = new Set<string>();
 let sharedTreeProvider: StoryBibleTreeProvider | undefined;
@@ -47,7 +69,7 @@ let sharedToggleTrashCommandRegistration: vscode.Disposable | undefined;
 
 export const storyBibleCapability: Capability = {
   id: STORY_BIBLE_CAPABILITY_ID,
-  bootstrapCommands: ["loredock.enableStoryBible"],
+  bootstrapCommands: ["loredock.enableStoryBible", ...STORY_BIBLE_DISABLED_COMMANDS],
   bootstrap(context) {
     const tree = getOrCreateTreeProvider();
     const projectWatcher = context.registerFileWatcher(
@@ -61,6 +83,9 @@ export const storyBibleCapability: Capability = {
     return [
       acquireSharedTreeRegistration(context, tree),
       context.registerCommand("loredock.enableStoryBible", () => enableStoryBible(context)),
+      ...STORY_BIBLE_DISABLED_COMMANDS.map((command) =>
+        context.registerCommand(command, () => showStoryBibleDisabledMessage(context))
+      ),
       projectWatcher,
       projectWatcher.onDidCreate(refresh),
       projectWatcher.onDidChange(refresh),
@@ -93,12 +118,12 @@ export const storyBibleCapability: Capability = {
       }),
       loreWatcher,
       trashWatcher,
-      loreWatcher.onDidCreate((uri) => handleWatchedFile(context, controller, tree, uri)),
-      loreWatcher.onDidChange((uri) => handleWatchedFile(context, controller, tree, uri)),
-      loreWatcher.onDidDelete((uri) => handleWatchedFile(context, controller, tree, uri)),
-      trashWatcher.onDidCreate((uri) => handleWatchedFile(context, controller, tree, uri)),
-      trashWatcher.onDidChange((uri) => handleWatchedFile(context, controller, tree, uri)),
-      trashWatcher.onDidDelete((uri) => handleWatchedFile(context, controller, tree, uri)),
+      loreWatcher.onDidCreate((uri) => handleWatchedFile(context, controller, tree, uri, "structure")),
+      loreWatcher.onDidChange((uri) => handleWatchedFile(context, controller, tree, uri, "content")),
+      loreWatcher.onDidDelete((uri) => handleWatchedFile(context, controller, tree, uri, "structure")),
+      trashWatcher.onDidCreate((uri) => handleWatchedFile(context, controller, tree, uri, "structure")),
+      trashWatcher.onDidChange((uri) => handleWatchedFile(context, controller, tree, uri, "metadata")),
+      trashWatcher.onDidDelete((uri) => handleWatchedFile(context, controller, tree, uri, "structure")),
       context.registerCommand("loredock.storyBible.createCard", () => createCard(controller)),
       context.registerCommand("loredock.storyBible.createCharacter", () => createCard(controller, "character")),
       context.registerCommand("loredock.storyBible.createLocation", () => createCard(controller, "location")),
@@ -139,6 +164,13 @@ function getOrCreateTreeProvider(): StoryBibleTreeProvider {
   return sharedTreeProvider;
 }
 
+function showStoryBibleDisabledMessage(context: KernelContext): void {
+  context.output.appendLine("当前工作区尚未启用故事圣经。请先运行 loredock.enableStoryBible。");
+  void vscode.window.showWarningMessage(
+    "当前工作区尚未启用故事圣经。请先运行 LoreDock：启用故事圣经。"
+  );
+}
+
 function acquireSharedTreeRegistration(context: KernelContext, tree: StoryBibleTreeProvider): vscode.Disposable {
   const key = context.workspaceFolder.uri.fsPath;
   sharedTreeWorkspaces.add(key);
@@ -147,12 +179,12 @@ function acquireSharedTreeRegistration(context: KernelContext, tree: StoryBibleT
     sharedTreeRegistration = vscode.window.registerTreeDataProvider(VIEW_ID, tree);
   }
   if (!sharedRefreshCommandRegistration) {
-    sharedRefreshCommandRegistration = vscode.commands.registerCommand("loredock.storyBible.refreshTree", () =>
+    sharedRefreshCommandRegistration = registerExclusiveCommand("loredock.storyBible.refreshTree", () =>
       refreshStoryBibleTree(tree)
     );
   }
   if (!sharedToggleTrashCommandRegistration) {
-    sharedToggleTrashCommandRegistration = vscode.commands.registerCommand("loredock.storyBible.toggleTrash", async () => {
+    sharedToggleTrashCommandRegistration = registerExclusiveCommand("loredock.storyBible.toggleTrash", async () => {
       tree.toggleTrashMode();
       await refreshStoryBibleTree(tree);
     });
@@ -206,17 +238,17 @@ async function enableStoryBible(context: KernelContext): Promise<void> {
   const readProject = await readJsonFile(projectManifestPath);
 
   if (readProject.status === "missing") {
-    context.output.appendLine("尚未运行 loredock.initProject，无法启用 Story Bible。");
-    void vscode.window.showWarningMessage("请先运行 LoreDock：初始化项目，再启用 Story Bible。");
+    context.output.appendLine("尚未运行 loredock.initProject，无法启用故事圣经。");
+    void vscode.window.showWarningMessage("请先运行 LoreDock：初始化项目，再启用故事圣经。");
     return;
   }
   if (readProject.status === "unsafe") {
-    context.output.appendLine("项目清单路径不安全，无法启用 Story Bible。");
+    context.output.appendLine("项目清单路径不安全，无法启用故事圣经。");
     void vscode.window.showWarningMessage("项目清单路径不安全，请先修复工作区文件结构。");
     return;
   }
   if (readProject.status === "invalidJson") {
-    context.output.appendLine("项目清单不是有效 JSON，无法启用 Story Bible。");
+    context.output.appendLine("项目清单不是有效 JSON，无法启用故事圣经。");
     void vscode.window.showWarningMessage("项目清单不是有效 JSON，请先修复 LoreDock 项目清单。");
     return;
   }
@@ -230,13 +262,13 @@ async function enableStoryBible(context: KernelContext): Promise<void> {
     context.diagnostics.add(item);
   }
   if (!validation.isValid || !validation.manifest) {
-    context.output.appendLine("项目清单处于异常状态，无法启用 Story Bible。");
-    void vscode.window.showWarningMessage("项目清单处于异常状态，请先修复后再启用 Story Bible。");
+    context.output.appendLine("项目清单处于异常状态，无法启用故事圣经。");
+    void vscode.window.showWarningMessage("项目清单处于异常状态，请先修复后再启用故事圣经。");
     return;
   }
 
   if (validation.manifest.capabilities.includes(STORY_BIBLE_CAPABILITY_ID)) {
-    context.output.appendLine("Story Bible 已经启用。");
+    context.output.appendLine("故事圣经已经启用。");
     await context.refreshWorkspaceFolder();
     await refreshStoryBibleTree(getOrCreateTreeProvider());
     return;
@@ -250,8 +282,8 @@ async function enableStoryBible(context: KernelContext): Promise<void> {
     for (const item of existing.diagnostics) {
       context.diagnostics.add(item);
     }
-    context.output.appendLine("现有 Story Bible 文件处于异常状态，无法启用 Story Bible。");
-    void vscode.window.showWarningMessage("现有 Story Bible 文件需要修复后才能启用。");
+    context.output.appendLine("现有故事圣经文件处于异常状态，无法启用故事圣经。");
+    void vscode.window.showWarningMessage("现有故事圣经文件需要修复后才能启用。");
     return;
   }
 
@@ -268,7 +300,7 @@ async function enableStoryBible(context: KernelContext): Promise<void> {
     STORY_BIBLE_TAG_DIR
   ];
   const plan: OperationPlan = {
-    summary: existing.status === "missing" ? "启用 Story Bible 并创建 lore/ 结构。" : "启用现有 Story Bible。",
+    summary: existing.status === "missing" ? "启用故事圣经并创建 lore/ 结构。" : "启用现有故事圣经。",
     directoriesToCreate: directories,
     filesToCreate: [],
     filesToModify: [MANIFEST_RELATIVE_PATH]
@@ -276,7 +308,7 @@ async function enableStoryBible(context: KernelContext): Promise<void> {
 
   const confirmed = await context.confirmOperationPlan(plan);
   if (!confirmed) {
-    context.output.appendLine("已取消启用 Story Bible，未写入文件。");
+    context.output.appendLine("已取消启用故事圣经，未写入文件。");
     await refreshStoryBibleTree(getOrCreateTreeProvider());
     return;
   }
@@ -292,7 +324,7 @@ async function enableStoryBible(context: KernelContext): Promise<void> {
     context.diagnostics.add({
       severity: "error",
       code: "storyBible.enable.partial",
-      message: "Story Bible 目录结构已创建，但项目清单未能更新。请再次运行启用 Story Bible 以恢复。",
+      message: "故事圣经目录结构已创建，但项目清单未能更新。请再次运行启用故事圣经以恢复。",
       workspaceFolder: workspaceRoot,
       relativePath: LORE_DIR
     });
@@ -301,7 +333,7 @@ async function enableStoryBible(context: KernelContext): Promise<void> {
 
   await context.refreshWorkspaceFolder();
   await refreshStoryBibleTree(getOrCreateTreeProvider());
-  void vscode.window.showInformationMessage("Story Bible 已启用。");
+  void vscode.window.showInformationMessage("故事圣经已启用。");
 }
 
 async function createCard(controller: StoryBibleController, type?: StoryBibleCardType): Promise<void> {
@@ -322,14 +354,27 @@ async function createCardFromSelection(controller: StoryBibleController): Promis
     return;
   }
   const selectedText = vscode.window.activeTextEditor?.document.getText(vscode.window.activeTextEditor.selection).trim() ?? "";
+  const draft = deriveCardDraftFromSelection(selectedText);
   const name = await vscode.window.showInputBox({
     title: `从选中文本创建${formatCardType(pickedType)}`,
-    value: selectedText
+    value: draft.name
   });
   if (name === undefined) {
     return;
   }
-  await controller.createCard(pickedType, name);
+  await controller.createCard(pickedType, name, draft.summary ? { summary: draft.summary } : {});
+}
+
+export function deriveCardDraftFromSelection(selectedText: string): { name: string; summary: string } {
+  const normalized = selectedText.replace(/\r\n/g, "\n").trim();
+  if (normalized === "") {
+    return { name: "", summary: "" };
+  }
+
+  const firstLine = normalized.split("\n").find((line) => line.trim() !== "")?.trim() ?? normalized;
+  const name = truncateText(firstLine, 80);
+  const summary = normalized === name ? "" : truncateText(normalized.replace(/\s+/g, " "), 240);
+  return { name, summary };
 }
 
 async function openCard(context: KernelContext, controller: StoryBibleController, node: unknown): Promise<void> {
@@ -346,7 +391,7 @@ async function renameCard(controller: StoryBibleController, node: unknown): Prom
     return;
   }
   const current = await controller.getCard(cardId);
-  const name = await vscode.window.showInputBox({ title: "重命名 Card", value: current?.name });
+  const name = await vscode.window.showInputBox({ title: "重命名条目", value: current?.name });
   if (name !== undefined) {
     await controller.renameCard(cardId, name);
   }
@@ -370,7 +415,7 @@ async function editCardMetadata(controller: StoryBibleController, node: unknown)
       { label: "关键词", field: "tags" as const },
       { label: "章节引用", field: "chapterRefs" as const }
     ],
-    { title: "编辑 Card 元数据" }
+    { title: "编辑条目元数据" }
   );
   if (!field) {
     return;
@@ -379,7 +424,7 @@ async function editCardMetadata(controller: StoryBibleController, node: unknown)
   if (field.field === "visibility") {
     const picked = await vscode.window.showQuickPick(
       STORY_BIBLE_VISIBILITIES.map((visibility) => ({ label: formatVisibility(visibility), description: visibility, visibility })),
-      { title: "Card 可见性" }
+      { title: "条目可见性" }
     );
     if (picked) {
       await controller.updateCardMetadata(cardId, { visibility: picked.visibility });
@@ -390,7 +435,7 @@ async function editCardMetadata(controller: StoryBibleController, node: unknown)
   if (field.field === "status") {
     const picked = await vscode.window.showQuickPick(
       STORY_BIBLE_STATUSES.map((status) => ({ label: formatStatus(status), description: status, status })),
-      { title: "Card 状态" }
+      { title: "条目状态" }
     );
     if (picked) {
       await controller.updateCardMetadata(cardId, { status: picked.status });
@@ -405,7 +450,7 @@ async function editCardMetadata(controller: StoryBibleController, node: unknown)
       : field.field === "aliases"
         ? card.aliases.join(", ")
         : field.field === "tags"
-          ? card.tags.join(", ")
+          ? card.tags.slice(1).join(", ")
           : (card.chapterRefs ?? []).join(", ")
   });
   if (value === undefined) {
@@ -417,7 +462,7 @@ async function editCardMetadata(controller: StoryBibleController, node: unknown)
   } else if (field.field === "aliases") {
     await controller.updateCardMetadata(cardId, { aliases: splitCommaList(value) });
   } else if (field.field === "tags") {
-    await controller.updateCardMetadata(cardId, { tags: splitCommaList(value) });
+    await controller.updateCardMetadata(cardId, { tags: [card.primaryKeyword, ...splitCommaList(value)] });
   } else {
     await controller.updateCardMetadata(cardId, { chapterRefs: splitCommaList(value) });
   }
@@ -431,7 +476,7 @@ async function deleteCard(controller: StoryBibleController, node: unknown): Prom
 }
 
 async function searchCards(context: KernelContext, controller: StoryBibleController): Promise<void> {
-  const text = await vscode.window.showInputBox({ title: "搜索 Story Bible Card" });
+  const text = await vscode.window.showInputBox({ title: "搜索故事圣经条目" });
   if (text === undefined) {
     return;
   }
@@ -439,11 +484,11 @@ async function searchCards(context: KernelContext, controller: StoryBibleControl
   const picked = await vscode.window.showQuickPick(
     cards.map((card) => ({
       label: card.name,
-      description: `${formatCardType(card.type)} · ${card.status}`,
+      description: `${formatCardType(card.type)} · ${card.status} · ${card.path}`,
       detail: card.summary,
       id: card.id
     })),
-    { title: "Story Bible 搜索结果" }
+    { title: "故事圣经搜索结果" }
   );
   if (picked) {
     openStoryBibleGallery(context, controller, picked.id);
@@ -458,7 +503,7 @@ async function browseKeywords(controller: StoryBibleController): Promise<void> {
       description: `${keyword.slug} · ${keyword.category} · ${keyword.usageCount}`,
       detail: keyword.description
     })),
-    { title: "Story Bible 关键词" }
+    { title: "故事圣经关键词" }
   );
 }
 
@@ -479,7 +524,7 @@ async function defineKeyword(controller: StoryBibleController): Promise<void> {
   if (category === undefined) {
     return;
   }
-  const appliesTo = await vscode.window.showInputBox({ title: "适用 CardType", value: "any" });
+  const appliesTo = await vscode.window.showInputBox({ title: "适用条目类型", value: "any" });
   if (appliesTo === undefined) {
     return;
   }
@@ -552,7 +597,7 @@ async function permanentlyDeleteTrashItem(controller: StoryBibleController, node
 async function pickCardType(): Promise<StoryBibleCardType | undefined> {
   const picked = await vscode.window.showQuickPick(
     STORY_BIBLE_CARD_TYPES.map((type) => ({ label: formatCardType(type), description: type, type })),
-    { title: "选择 Card 类型" }
+    { title: "选择条目类型" }
   );
   return picked?.type;
 }
@@ -566,7 +611,7 @@ async function pickCard(controller: StoryBibleController): Promise<StoryBibleCar
       detail: card.path,
       id: card.id
     })),
-    { title: "选择 Story Bible Card" }
+    { title: "选择故事圣经条目" }
   );
   return picked?.id;
 }
@@ -595,7 +640,7 @@ async function pickTrashItem(controller: StoryBibleController): Promise<StoryBib
       detail: item.originalPath,
       id: item.id
     })),
-    { title: "选择 Story Bible 资源垃圾桶项目" }
+    { title: "选择故事圣经资源垃圾桶项目" }
   );
   return picked?.id;
 }
@@ -604,18 +649,19 @@ function handleWatchedFile(
   context: KernelContext,
   controller: StoryBibleController,
   tree: StoryBibleTreeProvider,
-  uri: vscode.Uri
+  uri: vscode.Uri,
+  changeType: StoryBibleChangeType
 ): void {
   const relativePath = path.relative(context.workspaceFolder.uri.fsPath, uri.fsPath).replace(/\\/g, "/");
-  controller.notifyFileChanged(relativePath);
+  controller.notifyFileChanged(relativePath, changeType);
   void controller.refreshDiagnostics().then(() => refreshStoryBibleTree(tree));
-  context.output.appendLine(`Story Bible 文件已变化：${relativePath}`);
+  context.output.appendLine(`故事圣经文件已变化：${relativePath}`);
 }
 
 async function openRelativeFile(workspaceFolder: vscode.WorkspaceFolder, relativePath: string): Promise<void> {
   const absolutePath = await resolveExistingSafeStoryBiblePath(workspaceFolder.uri.fsPath, relativePath);
   if (!absolutePath) {
-    void vscode.window.showWarningMessage("Story Bible 文件缺失或路径不安全。");
+    void vscode.window.showWarningMessage("故事圣经文件缺失或路径不安全。");
     return;
   }
   const document = await vscode.workspace.openTextDocument(vscode.Uri.file(absolutePath));
@@ -679,6 +725,15 @@ function isTreeNode<T extends StoryBibleTreeNode["kind"]>(
 
 function splitCommaList(value: string): string[] {
   return value.split(",").map((item) => item.trim()).filter((item) => item !== "");
+}
+
+function truncateText(value: string, maxLength: number): string {
+  const clean = value.trim();
+  if (clean.length <= maxLength) {
+    return clean;
+  }
+
+  return clean.slice(0, Math.max(0, maxLength - 3)).trimEnd() + "...";
 }
 
 function formatCardType(type: StoryBibleCardType): string {

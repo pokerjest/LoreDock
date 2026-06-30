@@ -155,6 +155,7 @@ export async function readStoryBible(
     }
   }
 
+  await addOrphanMarkdownDiagnostics(workspaceRoot, dirs[LORE_DIR], diagnostics);
   addCrossFileDiagnostics(workspaceRoot, cards, keywordDefinitions, diagnostics);
   const keywords = buildKeywordCatalog(cards.map((item) => item.dto), keywordDefinitions.map((item) => item.dto));
   const keywordLabels = Object.fromEntries(keywords.map((keyword) => [keyword.slug, keyword.label]));
@@ -321,6 +322,16 @@ export function isStoryBibleTrashPath(relativePath: string): boolean {
   return normalized === STORY_BIBLE_TRASH_DIR || normalized.startsWith(`${STORY_BIBLE_TRASH_DIR}/`);
 }
 
+export function isStoryBibleTrashItemPath(relativePath: string): boolean {
+  const normalized = normalizeRelativePath(relativePath);
+  if (!normalized.startsWith(`${STORY_BIBLE_TRASH_DIR}/`)) {
+    return false;
+  }
+
+  const itemSegment = normalized.slice(STORY_BIBLE_TRASH_DIR.length + 1);
+  return itemSegment !== "" && !itemSegment.includes("/");
+}
+
 export function diagnostic(
   workspaceRoot: string,
   severity: DiagnosticItem["severity"],
@@ -358,7 +369,7 @@ async function inspectStoryBibleDirectories(
           workspaceRoot,
           "error",
           "storyBible.directory.unsafePath",
-          `Story Bible 目录 "${directory}" 解析到了工作区之外，或经过了不安全的符号链接。`,
+          `故事圣经目录 "${directory}" 解析到了工作区之外，或经过了不安全的符号链接。`,
           directory
         )
       );
@@ -371,7 +382,7 @@ async function inspectStoryBibleDirectories(
       }
     } else if (directory !== LORE_DIR) {
       diagnostics.push(
-        diagnostic(workspaceRoot, "warning", "storyBible.directory.missing", `Story Bible 目录 "${directory}" 缺失。`, directory)
+        diagnostic(workspaceRoot, "warning", "storyBible.directory.missing", `故事圣经目录 "${directory}" 缺失。`, directory)
       );
     }
   }
@@ -389,7 +400,7 @@ async function readCardFile(
   const absolutePath = await resolveExistingSafeStoryBiblePath(workspaceRoot, relativePath);
   if (!absolutePath) {
     diagnostics.push(
-      diagnostic(workspaceRoot, "error", "storyBible.card.file.unsafePath", `Card 文件 "${relativePath}" 路径不安全。`, relativePath)
+      diagnostic(workspaceRoot, "error", "storyBible.card.file.unsafePath", `条目文件 "${relativePath}" 路径不安全。`, relativePath)
     );
     return undefined;
   }
@@ -417,7 +428,7 @@ async function parseCardFrontmatter(
   }
 
   if (data.schemaVersion !== STORY_BIBLE_SCHEMA_VERSION) {
-    add("error", "storyBible.card.schemaVersion.unsupported", `Card schemaVersion 必须是 "${STORY_BIBLE_SCHEMA_VERSION}"。`);
+    add("error", "storyBible.card.schemaVersion.unsupported", `条目 schemaVersion 必须是 "${STORY_BIBLE_SCHEMA_VERSION}"。`);
   }
 
   const id = nonEmptyString<StoryBibleCardId>(data.id);
@@ -437,15 +448,15 @@ async function parseCardFrontmatter(
   const chapterRefs = data.chapterRefs === undefined ? undefined : parseStringArray(data.chapterRefs);
 
   if (!id) {
-    add("error", "storyBible.card.id.invalid", "Card id 必须是非空字符串。");
+    add("error", "storyBible.card.id.invalid", "条目 id 必须是非空字符串。");
   }
   if (!type) {
-    add("error", "storyBible.card.type.invalid", "Card type 必须是 character、location 或 rule。");
+    add("error", "storyBible.card.type.invalid", "条目 type 必须是 character、location 或 rule。");
   } else if (type !== expectedType) {
-    add("error", "storyBible.card.type.dirMismatch", `Card type "${type}" 与目录类型 "${expectedType}" 不一致。`);
+    add("error", "storyBible.card.type.dirMismatch", `条目 type "${type}" 与目录类型 "${expectedType}" 不一致。`);
   }
   if (!name) {
-    add("error", "storyBible.card.name.invalid", "Card name 必须是非空字符串。");
+    add("error", "storyBible.card.name.invalid", "条目 name 必须是非空字符串。");
   }
   if (!Array.isArray(data.aliases)) {
     add("error", "storyBible.card.aliases.invalid", "aliases 必须是字符串数组。");
@@ -480,12 +491,12 @@ async function parseCardFrontmatter(
       add("warning", "storyBible.card.tagSlug.invalid", `keyword slug "${tag}" 不合法。`);
     }
     if (isReservedObjectKeywordSlug(tag) && type && !tag.startsWith(objectKeywordPrefixFor(type))) {
-      add("warning", "storyBible.card.tag.reservedPrefixMismatch", `对象关键词 "${tag}" 与 Card type "${type}" 不匹配。`);
+      add("warning", "storyBible.card.tag.reservedPrefixMismatch", `对象关键词 "${tag}" 与条目 type "${type}" 不匹配。`);
     }
   }
 
   if (tags.length === 0 || !type || !tags[0].startsWith(objectKeywordPrefixFor(type))) {
-    add("warning", "storyBible.card.primaryKeyword.missing", "tags[0] 必须是当前 Card type 的对象主关键词。");
+    add("warning", "storyBible.card.primaryKeyword.missing", "tags[0] 必须是当前条目 type 的对象主关键词。");
   }
 
   if (chapterRefs && manuscriptReader) {
@@ -558,6 +569,33 @@ async function readKeywordFile(
   return parsed.definition;
 }
 
+async function addOrphanMarkdownDiagnostics(
+  workspaceRoot: string,
+  loreInspection: { status: "safe" | "missing" | "unsafe"; absolutePath: string },
+  diagnostics: DiagnosticItem[]
+): Promise<void> {
+  if (loreInspection.status !== "safe") {
+    return;
+  }
+
+  for (const relativePath of await listMarkdownFiles(loreInspection.absolutePath, workspaceRoot)) {
+    const normalized = normalizeRelativePath(relativePath);
+    const inCardDirectory = storyBibleCardTypeFromPath(normalized) !== undefined;
+    const inKeywordDirectory = normalized.startsWith(`${STORY_BIBLE_TAG_DIR}/`);
+    if (!inCardDirectory && !inKeywordDirectory) {
+      diagnostics.push(
+        diagnostic(
+          workspaceRoot,
+          "warning",
+          "storyBible.orphanMarkdown",
+          `Markdown 文件 "${normalized}" 不在故事圣经 v0.2 支持的目录中。`,
+          normalized
+        )
+      );
+    }
+  }
+}
+
 function parseKeywordFrontmatter(
   workspaceRoot: string,
   relativePath: string,
@@ -591,7 +629,7 @@ function parseKeywordFrontmatter(
     add("error", "storyBible.keyword.slug.invalid", "Keyword slug 必须是合法的小写 ASCII slug。");
   }
   if (slug && isReservedObjectKeywordSlug(slug)) {
-    add("warning", "storyBible.keyword.slug.reservedPrefix", "普通关键词定义不能使用 character/、location/ 或 rule/ 保留前缀。");
+    add("error", "storyBible.keyword.slug.reservedPrefix", "普通关键词定义不能使用 character/、location/ 或 rule/ 保留前缀。");
   }
   if (slug && normalizeRelativePath(relativePath) !== keywordDefinitionPath(slug)) {
     add("warning", "storyBible.keyword.path.slugMismatch", `Keyword 定义路径应为 "${keywordDefinitionPath(slug)}"。`);
@@ -610,7 +648,7 @@ function parseKeywordFrontmatter(
   }
   for (const target of appliesTo) {
     if (target !== "any" && !STORY_BIBLE_CARD_TYPES.includes(target as StoryBibleCardType)) {
-      add("warning", "storyBible.keyword.appliesTo.unknown", `appliesTo 包含 v0.2 未知 CardType "${target}"。`);
+      add("warning", "storyBible.keyword.appliesTo.unknown", `appliesTo 包含 v0.2 未知条目类型 "${target}"。`);
     }
   }
   if (!isIsoTimestamp(createdAt)) {
@@ -702,10 +740,19 @@ function addCrossFileDiagnostics(
   const ids = new Map<string, string[]>();
   const primaryKeywords = new Map<string, string[]>();
   const definitionSlugs = new Map<string, string[]>();
+  const namesByType = new Map<string, { label: string; paths: string[] }>();
+  const aliasesByType = new Map<string, { label: string; paths: string[] }>();
 
   for (const card of cards) {
     pushMap(ids, card.dto.id, card.dto.path);
     pushMap(primaryKeywords, card.dto.primaryKeyword, card.dto.path);
+    pushLabelMap(namesByType, `${card.dto.type}:${normalizeComparableText(card.dto.name)}`, card.dto.name, card.dto.path);
+    for (const alias of card.dto.aliases) {
+      if (alias.trim() === "") {
+        continue;
+      }
+      pushLabelMap(aliasesByType, `${card.dto.type}:${normalizeComparableText(alias)}`, alias, card.dto.path);
+    }
   }
 
   for (const definition of definitions) {
@@ -715,7 +762,7 @@ function addCrossFileDiagnostics(
   for (const [id, paths] of ids.entries()) {
     if (paths.length > 1) {
       for (const relativePath of paths) {
-        diagnostics.push(diagnostic(workspaceRoot, "error", "storyBible.card.id.duplicate", `Card id "${id}" 重复。`, relativePath));
+        diagnostics.push(diagnostic(workspaceRoot, "error", "storyBible.card.id.duplicate", `条目 id "${id}" 重复。`, relativePath));
       }
     }
   }
@@ -728,7 +775,7 @@ function addCrossFileDiagnostics(
             workspaceRoot,
             "warning",
             "storyBible.card.primaryKeyword.duplicate",
-            `对象主关键词 "${slug}" 被多个 Card 使用。`,
+            `对象主关键词 "${slug}" 被多个条目使用。`,
             relativePath
           )
         );
@@ -746,6 +793,27 @@ function addCrossFileDiagnostics(
     }
   }
 
+  for (const duplicate of namesByType.values()) {
+    const uniquePaths = [...new Set(duplicate.paths)];
+    if (uniquePaths.length > 1) {
+      for (const relativePath of uniquePaths) {
+        diagnostics.push(
+          diagnostic(workspaceRoot, "warning", "storyBible.card.name.duplicate", `同类型下条目 name "${duplicate.label}" 重复。`, relativePath)
+        );
+      }
+    }
+  }
+
+  for (const duplicate of aliasesByType.values()) {
+    const uniquePaths = [...new Set(duplicate.paths)];
+    if (uniquePaths.length > 1) {
+      for (const relativePath of uniquePaths) {
+        diagnostics.push(
+          diagnostic(workspaceRoot, "warning", "storyBible.card.alias.duplicate", `同类型下条目 alias "${duplicate.label}" 重复。`, relativePath)
+        );
+      }
+    }
+  }
 }
 
 async function listStoryBibleTrashItems(
@@ -762,7 +830,7 @@ async function listStoryBibleTrashItems(
         workspaceRoot,
         "error",
         "storyBible.trash.unsafePath",
-        "Story Bible 资源垃圾桶路径不安全。",
+        "故事圣经资源垃圾桶路径不安全。",
         STORY_BIBLE_TRASH_DIR
       )
     );
@@ -797,6 +865,10 @@ async function listStoryBibleTrashItems(
       const item = parseTrashItemMetadata(workspaceRoot, metadata, metadataPath);
       if (item) {
         items.push(item);
+      } else {
+        diagnostics.push(
+          diagnostic(workspaceRoot, "warning", "storyBible.trash.metadata.invalid", `资源垃圾桶元数据 "${metadataPath}" 字段不完整或不安全。`, metadataPath)
+        );
       }
     } catch {
       diagnostics.push(
@@ -830,7 +902,11 @@ function parseTrashItemMetadata(
   if (resourceType === "card" && !cardType) {
     return undefined;
   }
-  if (!isStoryBibleTrashPath(trashPath) || !normalizeRelativePath(metadataPath).startsWith(`${normalizeRelativePath(trashPath)}/`)) {
+  const normalizedTrashPath = normalizeRelativePath(trashPath);
+  if (
+    !isStoryBibleTrashItemPath(normalizedTrashPath) ||
+    normalizeRelativePath(metadataPath) !== normalizeRelativePath(`${normalizedTrashPath}/${STORY_BIBLE_TRASH_METADATA}`)
+  ) {
     return undefined;
   }
   if (!isStoryBibleContentPath(originalPath)) {
@@ -921,6 +997,21 @@ function pushMap(map: Map<string, string[]>, key: string, value: string): void {
   const items = map.get(key) ?? [];
   items.push(value);
   map.set(key, items);
+}
+
+function pushLabelMap(
+  map: Map<string, { label: string; paths: string[] }>,
+  key: string,
+  label: string,
+  pathValue: string
+): void {
+  const item = map.get(key) ?? { label, paths: [] };
+  item.paths.push(pathValue);
+  map.set(key, item);
+}
+
+function normalizeComparableText(value: string): string {
+  return value.trim().toLocaleLowerCase("zh-CN");
 }
 
 function isNotFound(error: unknown): boolean {

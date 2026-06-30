@@ -2,7 +2,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import { inspectExistingWorkspacePath } from "../../kernel/safeWorkspacePath";
 import { MANIFEST_RELATIVE_PATH } from "../../kernel/types";
-import { isStoryBibleCapabilityEnabled, readStoryBible } from "./files";
+import { isStoryBibleCapabilityEnabled, readStoryBible, type StoryBibleReadResult as StoryBibleCatalog } from "./files";
 import type {
   KeywordCatalogEntryDto,
   KeywordSlug,
@@ -50,6 +50,9 @@ export type StoryBibleTreeNode =
 export class StoryBibleTreeProvider implements vscode.TreeDataProvider<StoryBibleTreeNode> {
   private readonly emitter = new vscode.EventEmitter<StoryBibleTreeNode | undefined>();
   private mode: "active" | "trash" = "active";
+  // Per-render cache: one Story Bible scan is shared by the root node and all of
+  // its expanded children, then dropped at the start of the next top-level query.
+  private readonly renderCache = new Map<string, Promise<StoryBibleCatalog>>();
   public readonly onDidChangeTreeData = this.emitter.event;
 
   public constructor(private readonly fixedWorkspaceFolder?: vscode.WorkspaceFolder) {}
@@ -69,6 +72,9 @@ export class StoryBibleTreeProvider implements vscode.TreeDataProvider<StoryBibl
   }
 
   public async getChildren(element?: StoryBibleTreeNode): Promise<StoryBibleTreeNode[]> {
+    if (!element) {
+      this.renderCache.clear();
+    }
     if (element?.kind === "workspace") {
       return this.getWorkspaceRootNodes(element.workspaceFolder);
     }
@@ -93,6 +99,18 @@ export class StoryBibleTreeProvider implements vscode.TreeDataProvider<StoryBibl
       title: workspaceFolder.name,
       description: workspaceFolder.uri.fsPath
     }));
+  }
+
+  private readCatalog(workspaceRoot: string): Promise<StoryBibleCatalog> {
+    let cached = this.renderCache.get(workspaceRoot);
+    if (!cached) {
+      cached = readStoryBible(workspaceRoot).catch((error: unknown) => {
+        this.renderCache.delete(workspaceRoot);
+        throw error;
+      });
+      this.renderCache.set(workspaceRoot, cached);
+    }
+    return cached;
   }
 
   private async getWorkspaceRootNodes(workspaceFolder: vscode.WorkspaceFolder): Promise<StoryBibleTreeNode[]> {
@@ -124,11 +142,11 @@ export class StoryBibleTreeProvider implements vscode.TreeDataProvider<StoryBibl
     const enabled = await isStoryBibleCapabilityEnabled(workspaceFolder.uri.fsPath);
     if (!enabled) {
       return [
-        { kind: "empty", workspaceFolder, title: "尚未启用 Story Bible" },
+        { kind: "empty", workspaceFolder, title: "尚未启用故事圣经" },
         {
           kind: "action",
           workspaceFolder,
-          title: "启用 Story Bible",
+          title: "启用故事圣经",
           description: "创建 lore/ 结构",
           command: "loredock.enableStoryBible",
           icon: "add"
@@ -136,11 +154,11 @@ export class StoryBibleTreeProvider implements vscode.TreeDataProvider<StoryBibl
       ];
     }
 
-    const result = await readStoryBible(workspaceFolder.uri.fsPath);
+    const result = await this.readCatalog(workspaceFolder.uri.fsPath);
 
     if (this.mode === "trash") {
       if (result.trashItems.length === 0) {
-        return [{ kind: "empty", workspaceFolder, title: "Story Bible 资源垃圾桶为空" }];
+        return [{ kind: "empty", workspaceFolder, title: "故事圣经资源垃圾桶为空" }];
       }
 
       return result.trashItems.map((item) => ({
@@ -170,7 +188,7 @@ export class StoryBibleTreeProvider implements vscode.TreeDataProvider<StoryBibl
   }
 
   private async getGroupChildren(group: Extract<StoryBibleTreeNode, { kind: "group" }>): Promise<StoryBibleTreeNode[]> {
-    const result = await readStoryBible(group.workspaceFolder.uri.fsPath);
+    const result = await this.readCatalog(group.workspaceFolder.uri.fsPath);
     if (group.group === "keyword") {
       return result.keywords.map((keyword) => keywordNode(group.workspaceFolder, keyword));
     }
@@ -209,7 +227,7 @@ export class StoryBibleTreeProvider implements vscode.TreeDataProvider<StoryBibl
         item.resourceUri = vscode.Uri.file(path.join(element.workspaceFolder.uri.fsPath, element.path));
         item.command = {
           command: "loredock.storyBible.openCard",
-          title: "打开 Card",
+          title: "打开条目",
           arguments: [element]
         };
         return item;
@@ -330,7 +348,7 @@ function formatStatus(status: string): string {
 function formatResourceType(type: StoryBibleTrashResourceType): string {
   switch (type) {
     case "card":
-      return "Card";
+      return "条目";
     case "keyword-definition":
       return "关键词定义";
   }

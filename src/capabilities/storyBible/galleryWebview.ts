@@ -1,3 +1,4 @@
+import { randomBytes } from "crypto";
 import * as vscode from "vscode";
 import type { KernelContext } from "../../kernel/types";
 import {
@@ -36,7 +37,7 @@ export function openStoryBibleGallery(
 ): void {
   const panel = vscode.window.createWebviewPanel(
     "loredock.storyBible.gallery",
-    "Story Bible 卡牌库",
+    "故事圣经条目库",
     vscode.ViewColumn.One,
     {
       enableScripts: true,
@@ -101,7 +102,7 @@ export function buildStoryBibleGalleryHtml(webview: vscode.Webview, nonce: strin
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="${csp}">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Story Bible 卡牌库</title>
+  <title>故事圣经条目库</title>
   <style>
     :root {
       color-scheme: light dark;
@@ -776,7 +777,7 @@ export function buildStoryBibleGalleryHtml(webview: vscode.Webview, nonce: strin
     <aside class="sidebar">
       <div class="brand">LoreDock</div>
       <div class="side-tools">
-        <input id="search" class="search" placeholder="搜索卡牌">
+        <input id="search" class="search" placeholder="搜索条目">
       </div>
       <div class="nav-title">分类</div>
       <nav id="categoryNav" class="nav-list"></nav>
@@ -786,7 +787,7 @@ export function buildStoryBibleGalleryHtml(webview: vscode.Webview, nonce: strin
     <div class="main">
       <header class="topbar">
         <div class="title">
-          <strong>Story Bible 卡牌库</strong>
+          <strong>故事圣经条目库</strong>
           <span id="subtitle">人物、地点、规则</span>
         </div>
         <select id="sortMode" class="select" aria-label="排序">
@@ -798,11 +799,11 @@ export function buildStoryBibleGalleryHtml(webview: vscode.Webview, nonce: strin
       </header>
       <main class="content">
         <section class="hero">
-          <h1 id="heroTitle">全部卡牌</h1>
+          <h1 id="heroTitle">全部条目</h1>
           <div id="heroMeta" class="hero-meta"></div>
         </section>
         <section id="sections"></section>
-        <section id="empty" class="empty" hidden>暂无卡牌。</section>
+        <section id="empty" class="empty" hidden>暂无条目。</section>
       </main>
     </div>
   </div>
@@ -811,7 +812,7 @@ export function buildStoryBibleGalleryHtml(webview: vscode.Webview, nonce: strin
     <div class="editor">
       <div class="editor-head">
         <div>
-          <h2 id="editorTitle">编辑卡牌</h2>
+          <h2 id="editorTitle">编辑条目</h2>
           <div id="editorPath" class="meta"></div>
         </div>
         <button id="closeEditor" class="button" type="button">关闭</button>
@@ -1009,19 +1010,19 @@ export function buildStoryBibleGalleryHtml(webview: vscode.Webview, nonce: strin
           const keyword = state.keywords.find((item) => item.slug === tag);
           return [tag, keyword?.label ?? "", keyword?.description ?? ""].join(" ");
         }).join(" ");
-        return [card.name, card.summary, card.aliases.join(" "), keywordText]
+        return [card.name, card.title ?? "", card.summary, card.aliases.join(" "), keywordText]
           .join(" ")
           .toLowerCase()
           .includes(text);
       }));
 
       const counts = countByType(state.cards);
-      els.subtitle.textContent = state.cards.length + " 张卡牌";
+      els.subtitle.textContent = state.cards.length + " 个条目";
       els.heroTitle.textContent = activeKeyword
         ? keywordLabel(activeKeyword)
         : activeCategory
           ? typeLabel(activeCategory)
-          : "全部卡牌";
+          : "全部条目";
       els.heroMeta.innerHTML = [
         "人物 " + (counts.character ?? 0),
         "地点 " + (counts.location ?? 0),
@@ -1039,7 +1040,7 @@ export function buildStoryBibleGalleryHtml(webview: vscode.Webview, nonce: strin
     function renderNavigation() {
       const counts = countByType(state.cards);
       const categories = [
-        ["", "全部卡牌", state.cards.length],
+        ["", "全部条目", state.cards.length],
         ["character", "人物", counts.character ?? 0],
         ["location", "地点", counts.location ?? 0],
         ["rule", "规则", counts.rule ?? 0]
@@ -1343,7 +1344,7 @@ export function buildStoryBibleGalleryHtml(webview: vscode.Webview, nonce: strin
 async function saveCardFromWebview(controller: StoryBibleController, payload: SaveCardPayload): Promise<void> {
   const current = await controller.getCard(payload.id);
   if (!current) {
-    throw new Error(`未找到 Story Bible Card "${payload.id}"。`);
+    throw new Error(`未找到故事圣经条目 "${payload.id}"。`);
   }
 
   await controller.updateCardMetadata(payload.id, {
@@ -1364,13 +1365,13 @@ async function openCardMarkdown(
 ): Promise<void> {
   const relativePath = await controller.resolveCardPath(cardId);
   if (!relativePath) {
-    void vscode.window.showWarningMessage("Card 文件缺失或路径不安全。");
+    void vscode.window.showWarningMessage("条目文件缺失或路径不安全。");
     return;
   }
 
   const absolutePath = await resolveExistingSafeStoryBiblePath(workspaceFolder.uri.fsPath, relativePath);
   if (!absolutePath) {
-    void vscode.window.showWarningMessage("Card 文件缺失或路径不安全。");
+    void vscode.window.showWarningMessage("条目文件缺失或路径不安全。");
     return;
   }
 
@@ -1379,10 +1380,5 @@ async function openCardMarkdown(
 }
 
 function createNonce(): string {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let result = "";
-  for (let i = 0; i < 32; i += 1) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
+  return randomBytes(16).toString("hex");
 }

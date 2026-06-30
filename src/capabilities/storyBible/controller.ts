@@ -18,6 +18,7 @@ import {
 import {
   cardTypeDirectory,
   isStoryBibleContentPath,
+  isStoryBibleTrashItemPath,
   isStoryBibleTrashPath,
   keywordDefinitionPath,
   parseKeywordDefinitionText,
@@ -100,9 +101,9 @@ export class StoryBibleController implements StoryBibleReader, StoryBibleActions
     return result.diagnostics;
   }
 
-  public notifyFileChanged(relativePath: string): void {
+  public notifyFileChanged(relativePath: string, type?: StoryBibleChangeType): void {
     const normalized = normalizeRelativePath(relativePath);
-    this.emit(normalized.includes("/trash/") ? "structure" : "content", { path: normalized });
+    this.emit(type ?? (normalized.includes("/trash/") ? "structure" : "content"), { path: normalized });
   }
 
   public async listCards(query: StoryBibleSearchQuery = {}): Promise<StoryBibleCardDto[]> {
@@ -123,7 +124,7 @@ export class StoryBibleController implements StoryBibleReader, StoryBibleActions
     const catalog = await this.readCatalog();
     const card = catalog.cards.find((item) => item.dto.id === cardId);
     if (!card) {
-      return { ok: false, error: `未找到 Story Bible Card "${cardId}"。` };
+      return { ok: false, error: `未找到故事圣经条目 "${cardId}"。` };
     }
 
     return { ok: true, text: card.body };
@@ -187,7 +188,7 @@ export class StoryBibleController implements StoryBibleReader, StoryBibleActions
     options: Partial<Pick<StoryBibleCardDto, "aliases" | "summary" | "visibility" | "status" | "chapterRefs">> = {}
   ): Promise<StoryBibleActionResult> {
     assertCardType(type);
-    const cleanName = assertNonEmpty(name, "Card name");
+    const cleanName = assertNonEmpty(name, "条目名称");
     const catalog = await this.readCatalog();
     const directory = cardTypeDirectory(type);
     const fileName = await allocateCardFilename(this.workspaceRoot, directory, cleanName);
@@ -211,17 +212,24 @@ export class StoryBibleController implements StoryBibleReader, StoryBibleActions
     validateVisibility(card.visibility);
     validateStatus(card.status);
 
+    const body = `# ${cleanName}\n\n`;
+    const content = stringifyCardMarkdown(card, body);
     const plan = storyBiblePlan(`新建${formatCardType(type)}“${cleanName}”。`, contentDirectoriesFor(directory), [cardPath]);
+    plan.fileContentPreviews = [{
+      relativePath: cardPath,
+      title: "初始 frontmatter",
+      content: extractFrontmatterPreview(content)
+    }];
     return this.applyPlan(plan, async (writer) => {
       for (const dir of contentDirectoriesFor(directory)) {
         await writer.ensureDirectory(dir);
       }
-      await writer.writeFile(cardPath, stringifyCardMarkdown(card, `# ${cleanName}\n\n`));
+      await writer.writeFile(cardPath, content);
     }, [{ type: "structure", cardId: card.id, path: cardPath }]);
   }
 
   public async renameCard(cardId: StoryBibleCardId, name: string): Promise<StoryBibleActionResult> {
-    const cleanName = assertNonEmpty(name, "Card name");
+    const cleanName = assertNonEmpty(name, "条目名称");
     const catalog = await this.readCatalog();
     const card = requireParsedCard(catalog.cards, cardId);
     const primaryKeyword = resolvePrimaryKeywordForName(catalog.keywords.map((keyword) => keyword.slug as string), card.dto, cleanName);
@@ -233,7 +241,7 @@ export class StoryBibleController implements StoryBibleReader, StoryBibleActions
       updatedAt: this.timestamp()
     };
 
-    const plan = storyBiblePlan(`重命名 Card 为“${cleanName}”。`, [], [], [card.dto.path]);
+    const plan = storyBiblePlan(`重命名条目为“${cleanName}”。`, [], [], [card.dto.path]);
     return this.applyPlan(plan, async (writer) => {
       await writer.writeFile(card.dto.path, stringifyCardMarkdown(next, card.body, card.frontmatter));
     }, [{ type: "metadata", cardId, path: card.dto.path }]);
@@ -245,7 +253,7 @@ export class StoryBibleController implements StoryBibleReader, StoryBibleActions
   ): Promise<StoryBibleActionResult> {
     const catalog = await this.readCatalog();
     const card = requireParsedCard(catalog.cards, cardId);
-    const nextName = patch.name === undefined ? card.dto.name : assertNonEmpty(patch.name, "Card name");
+    const nextName = patch.name === undefined ? card.dto.name : assertNonEmpty(patch.name, "条目名称");
     const nameChanged = nextName !== card.dto.name;
     const primaryKeyword = nameChanged
       ? resolvePrimaryKeywordForName(catalog.keywords.map((keyword) => keyword.slug as string), card.dto, nextName)
@@ -283,7 +291,7 @@ export class StoryBibleController implements StoryBibleReader, StoryBibleActions
     validateVisibility(next.visibility);
     validateStatus(next.status);
 
-    const plan = storyBiblePlan(`更新 Card“${card.dto.name}”元数据。`, [], [], [card.dto.path]);
+    const plan = storyBiblePlan(`更新条目“${card.dto.name}”元数据。`, [], [], [card.dto.path]);
     return this.applyPlan(plan, async (writer) => {
       await writer.writeFile(card.dto.path, stringifyCardMarkdown(next, card.body, card.frontmatter));
     }, [{ type: "metadata", cardId, path: card.dto.path }]);
@@ -309,11 +317,11 @@ export class StoryBibleController implements StoryBibleReader, StoryBibleActions
     };
 
     if (!fileMove) {
-      throw new Error(`无法删除 Card：文件 "${card.dto.path}" 缺失或路径不安全。`);
+      throw new Error(`无法删除条目：文件 "${card.dto.path}" 缺失或路径不安全。`);
     }
 
     const plan = storyBiblePlan(
-      `将 Card“${card.dto.name}”移入 Story Bible 资源垃圾桶。`,
+      `将条目“${card.dto.name}”移入故事圣经资源垃圾桶。`,
       trashDirectoriesFor(trashPath),
       [metadataPath]
     );
@@ -420,7 +428,7 @@ export class StoryBibleController implements StoryBibleReader, StoryBibleActions
     }
 
     const plan = storyBiblePlan(
-      `将关键词定义“${existing.dto.label}”移入 Story Bible 资源垃圾桶。`,
+      `将关键词定义“${existing.dto.label}”移入故事圣经资源垃圾桶。`,
       trashDirectoriesFor(trashPath),
       [metadataPath]
     );
@@ -470,7 +478,7 @@ export class StoryBibleController implements StoryBibleReader, StoryBibleActions
         await writer.deleteDirectoryRecursive(item.trashPath);
       },
       [{ type: "structure", trashItemId }],
-      `将永久删除 Story Bible 资源垃圾桶项目“${item.title}”。此操作不能撤销。确认删除？`
+      `将永久删除故事圣经资源垃圾桶项目“${item.title}”。此操作不能撤销。确认删除？`
     );
   }
 
@@ -495,7 +503,7 @@ export class StoryBibleController implements StoryBibleReader, StoryBibleActions
     assertSafeStoryBibleOperations(plan);
     const confirmed = await this.options.confirmOperationPlan(plan);
     if (!confirmed) {
-      this.options.output.appendLine(`已取消 Story Bible 操作：${plan.summary}`);
+      this.options.output.appendLine(`已取消故事圣经操作：${plan.summary}`);
       return { applied: false, plan };
     }
 
@@ -583,7 +591,7 @@ function filterKeywords(keywords: KeywordCatalogEntryDto[], query: StoryBibleKey
 function requireParsedCard(cards: ParsedStoryBibleCard[], cardId: StoryBibleCardId): ParsedStoryBibleCard {
   const card = cards.find((candidate) => candidate.dto.id === cardId);
   if (!card) {
-    throw new Error(`未找到 Story Bible Card "${cardId}"。`);
+    throw new Error(`未找到故事圣经条目 "${cardId}"。`);
   }
   return card;
 }
@@ -697,6 +705,16 @@ function stringifyTrashMetadata(metadata: TrashMetadata): string {
   return `${JSON.stringify(metadata, null, 2)}\n`;
 }
 
+function extractFrontmatterPreview(markdown: string): string {
+  const normalized = markdown.replace(/\r\n/g, "\n");
+  const endIndex = normalized.indexOf("\n---\n", 4);
+  if (!normalized.startsWith("---\n") || endIndex < 0) {
+    return normalized;
+  }
+
+  return normalized.slice(0, endIndex + "\n---".length);
+}
+
 function validateOrdinaryKeywordSlug(value: string): KeywordSlug {
   const slug = normalizeKeywordSlugInput(value);
   if (!isValidKeywordSlug(slug)) {
@@ -748,7 +766,7 @@ function validateStatus(value: StoryBibleStatus): void {
 
 function assertCardType(value: StoryBibleCardType): void {
   if (!STORY_BIBLE_CARD_TYPES.includes(value)) {
-    throw new Error(`Card type "${String(value)}" 不受支持。`);
+    throw new Error(`条目类型 "${String(value)}" 不受支持。`);
   }
 }
 
@@ -762,13 +780,13 @@ function assertNonEmpty(value: string, label: string): string {
 function assertSafeStoryBibleOperations(plan: OperationPlan): void {
   for (const directory of plan.directoriesToCreate) {
     if (!isAllowedDirectoryCreate(directory)) {
-      throw new Error(`Story Bible 目录创建操作不安全："${directory}"。`);
+      throw new Error(`故事圣经目录创建操作不安全："${directory}"。`);
     }
   }
 
   for (const filePath of [...plan.filesToCreate, ...plan.filesToModify]) {
     if (!isStoryBibleContentPath(filePath) && !isStoryBibleTrashPath(filePath)) {
-      throw new Error(`Story Bible 文件写入操作必须位于 lore/ 或 Story Bible 资源垃圾桶："${filePath}"。`);
+      throw new Error(`故事圣经文件写入操作必须位于 lore/ 或故事圣经资源垃圾桶："${filePath}"。`);
     }
   }
 
@@ -776,13 +794,13 @@ function assertSafeStoryBibleOperations(plan: OperationPlan): void {
     const fromContentToTrash = isStoryBibleContentPath(operation.from) && isStoryBibleTrashPath(operation.to);
     const fromTrashToContent = isStoryBibleTrashPath(operation.from) && isStoryBibleContentPath(operation.to);
     if (!fromContentToTrash && !fromTrashToContent) {
-      throw new Error("Story Bible 文件移动操作必须在 lore/ 和 Story Bible 资源垃圾桶之间进行。");
+      throw new Error("故事圣经文件移动操作必须在 lore/ 和故事圣经资源垃圾桶之间进行。");
     }
   }
 
   for (const directory of plan.directoriesToDelete ?? []) {
-    if (!isStoryBibleTrashPath(directory)) {
-      throw new Error("Story Bible 递归删除操作必须位于 Story Bible 资源垃圾桶目录下。");
+    if (!isStoryBibleTrashItemPath(directory)) {
+      throw new Error("故事圣经递归删除操作必须指向单个故事圣经资源垃圾桶项目。");
     }
   }
 }

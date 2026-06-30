@@ -103,6 +103,10 @@ suite("Manuscript", () => {
     assert.match(text, /LOREDOCK_AGENT_SYSTEM_RULES_START/);
     assert.match(text, /## 系统规则（只读）/);
     assert.match(text, /用户确认后，AI 在本次协作中按用户自己的规则执行/);
+    assert.match(text, /## 故事圣经协作规则/);
+    assert.match(text, /LoreDock：新建人物/);
+    assert.match(text, /loredock\.storyBible\.createCharacter/);
+    assert.match(text, /不要直接伪造或改写故事圣经条目的结构字段/);
     assert.match(text, /LOREDOCK_AGENT_USER_RULES_START/);
     assert.match(text, /## 用户自定义规则（可编辑）/);
 
