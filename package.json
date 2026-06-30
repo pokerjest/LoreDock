@@ -2,7 +2,7 @@
   "name": "loredock",
   "displayName": "LoreDock",
   "description": "面向 VS Code 的本地优先故事项目系统。",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "loredock",
   "license": "UNLICENSED",
   "engines": {
