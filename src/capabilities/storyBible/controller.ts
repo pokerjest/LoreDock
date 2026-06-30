@@ -212,7 +212,7 @@ export class StoryBibleController implements StoryBibleReader, StoryBibleActions
     validateVisibility(card.visibility);
     validateStatus(card.status);
 
-    const body = `# ${cleanName}\n\n`;
+    const body = createCardTemplateBody(type, cleanName);
     const content = stringifyCardMarkdown(card, body);
     const plan = storyBiblePlan(`新建${formatCardType(type)}“${cleanName}”。`, contentDirectoriesFor(directory), [cardPath]);
     plan.fileContentPreviews = [{
@@ -713,6 +713,68 @@ function extractFrontmatterPreview(markdown: string): string {
   }
 
   return normalized.slice(0, endIndex + "\n---".length);
+}
+
+function createCardTemplateBody(type: StoryBibleCardType, name: string): string {
+  const sections: Record<StoryBibleCardType, string[]> = {
+    character: [
+      "## 角色定位",
+      "",
+      "- 在故事中的功能：",
+      "",
+      "## 目标",
+      "",
+      "- 当前想要得到什么：",
+      "",
+      "## 冲突",
+      "",
+      "- 阻碍、矛盾或代价：",
+      "",
+      "## 说话方式",
+      "",
+      "- 语气、口头禅或表达习惯：",
+      "",
+      "## 当前状态",
+      "",
+      "- 剧情推进到这里时的状态："
+    ],
+    location: [
+      "## 区域",
+      "",
+      "- 所属地域或空间范围：",
+      "",
+      "## 氛围",
+      "",
+      "- 作者希望读者感到：",
+      "",
+      "## 重要规则",
+      "",
+      "- 在这里必须遵守或容易出事的规则：",
+      "",
+      "## 当前状态",
+      "",
+      "- 剧情推进到这里时的状态："
+    ],
+    rule: [
+      "## 分类",
+      "",
+      "- 魔法、社会、组织、技术或叙事规则：",
+      "",
+      "## 重要性",
+      "",
+      "- 为什么它会影响故事：",
+      "",
+      "## 规则陈述",
+      "",
+      "- 这条规则具体是什么：",
+      "",
+      "## 例外",
+      "",
+      "- 谁能例外，代价是什么："
+    ]
+  };
+
+  return [`# ${name}`, "", ...sections[type], ""].join("\n");
 }
 
 function validateOrdinaryKeywordSlug(value: string): KeywordSlug {

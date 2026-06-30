@@ -68,7 +68,9 @@ suite("Story Bible", function () {
     assert.equal(rule.tags[0], "rule/blood-magic");
     assert.equal(character.keywordLabels[character.tags[0]], "Wu Jin");
     assert.equal(await exists(path.join(workspace, character.path)), true);
-    assert.equal((await controller.readCardText(character.id)).text, "# Wu Jin\n\n");
+    assert.match((await controller.readCardText(character.id)).text ?? "", /^# Wu Jin\n\n## 角色定位/);
+    assert.match((await controller.readCardText(location.id)).text ?? "", /^# Black Tower\n\n## 区域/);
+    assert.match((await controller.readCardText(rule.id)).text ?? "", /^# Blood Magic\n\n## 分类/);
   });
 
   test("previews initial card frontmatter before creating a card", async () => {

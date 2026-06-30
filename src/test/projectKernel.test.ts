@@ -531,7 +531,7 @@ suite("ProjectKernel", function () {
 
     try {
       await kernel.initProject(workspaceFolder);
-      await vscode.commands.executeCommand("loredock.enableManuscript", workspaceFolder);
+      await dispatchCapabilityCommand(kernel, "loredock.enableManuscript", [workspaceFolder]);
 
       assert.equal(await exists(path.join(workspace, "manuscript/manifest.json")), true);
       assert.equal(await exists(path.join(workspace, "manuscript/notes.md")), true);
@@ -562,7 +562,7 @@ suite("ProjectKernel", function () {
       await fs.mkdir(path.join(workspace, "manuscript"), { recursive: true });
       await fs.writeFile(path.join(workspace, "manuscript/notes.md"), "keep me", "utf8");
 
-      await vscode.commands.executeCommand("loredock.enableManuscript", workspaceFolder);
+      await dispatchCapabilityCommand(kernel, "loredock.enableManuscript", [workspaceFolder]);
 
       const projectManifest = JSON.parse(await fs.readFile(path.join(workspace, ".loredock/project.json"), "utf8"));
       assert.equal(projectManifest.capabilities.includes("manuscript.core"), false);
@@ -586,7 +586,7 @@ suite("ProjectKernel", function () {
 
     try {
       await kernel.initProject(workspaceFolder);
-      await vscode.commands.executeCommand("loredock.storyBible.createCardFromSelection", workspaceFolder);
+      await dispatchCapabilityCommand(kernel, "loredock.storyBible.createCardFromSelection", [workspaceFolder]);
 
       assert.equal(await exists(path.join(workspace, "lore")), false);
       assert.equal(seenPlans.length, 1);
@@ -609,7 +609,7 @@ suite("ProjectKernel", function () {
 
     try {
       await kernel.initProject(workspaceFolder);
-      await vscode.commands.executeCommand("loredock.enableStoryBible", workspaceFolder);
+      await dispatchCapabilityCommand(kernel, "loredock.enableStoryBible", [workspaceFolder]);
 
       assert.equal(await exists(path.join(workspace, "lore/characters")), true);
       assert.equal(await exists(path.join(workspace, "lore/locations")), true);
@@ -638,7 +638,7 @@ suite("ProjectKernel", function () {
 
     try {
       await kernel.initProject(workspaceFolder);
-      await vscode.commands.executeCommand("loredock.enableStoryBible", workspaceFolder);
+      await dispatchCapabilityCommand(kernel, "loredock.enableStoryBible", [workspaceFolder]);
 
       const projectManifest = JSON.parse(await fs.readFile(path.join(workspace, ".loredock/project.json"), "utf8"));
       assert.equal(projectManifest.capabilities.includes("story-bible.core"), false);
@@ -666,8 +666,8 @@ suite("ProjectKernel", function () {
       await fs.mkdir(path.join(workspace, "lore/rules"), { recursive: true });
       await fs.mkdir(path.join(workspace, "lore/tags"), { recursive: true });
 
-      await vscode.commands.executeCommand("loredock.enableStoryBible", workspaceFolder);
-      await vscode.commands.executeCommand("loredock.enableStoryBible", workspaceFolder);
+      await dispatchCapabilityCommand(kernel, "loredock.enableStoryBible", [workspaceFolder]);
+      await dispatchCapabilityCommand(kernel, "loredock.enableStoryBible", [workspaceFolder]);
 
       const projectManifest = JSON.parse(await fs.readFile(path.join(workspace, ".loredock/project.json"), "utf8"));
       assert.equal(
