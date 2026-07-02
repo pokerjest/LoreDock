@@ -16,7 +16,12 @@ import {
 } from "./manifest";
 import { bookAgentPath, bookSystemAgentPath, createBookAgentText, createBookSystemAgentText } from "./bookAgent";
 import { ManuscriptController } from "./controller";
-import { ManuscriptTreeProvider, type ManuscriptTreeNode } from "./tree";
+import {
+  BookLibraryTreeProvider,
+  BookSelectionState,
+  ManuscriptTreeProvider,
+  type ManuscriptTreeNode
+} from "./tree";
 import {
   LORE_DIR,
   STORY_BIBLE_CAPABILITY_ID,
@@ -38,33 +43,50 @@ import {
   type VolumeId
 } from "./types";
 
-const VIEW_ID = "loredock.manuscript.tree";
+const MANUSCRIPT_VIEW_ID = "loredock.manuscript.tree";
+const BOOK_LIBRARY_VIEW_ID = "loredock.bookLibrary.tree";
 const MANUSCRIPT_ACTIVE_CONTEXT = "loredock.manuscript.active";
 const MANUSCRIPT_TRASH_MODE_CONTEXT = "loredock.manuscript.trashMode";
 const sharedTreeWorkspaces = new Set<string>();
+const sharedBookSelection = new BookSelectionState();
 let sharedTreeProvider: ManuscriptTreeProvider | undefined;
+let sharedBookLibraryTreeProvider: BookLibraryTreeProvider | undefined;
 let sharedTreeRegistration: vscode.Disposable | undefined;
+let sharedBookLibraryTreeRegistration: vscode.Disposable | undefined;
 let sharedRefreshCommandRegistration: vscode.Disposable | undefined;
 let sharedToggleTrashCommandRegistration: vscode.Disposable | undefined;
 
 export const manuscriptCapability: Capability = {
   id: MANUSCRIPT_CAPABILITY_ID,
-  bootstrapCommands: ["loredock.enableManuscript", "loredock.manuscript.createBook", "loredock.manuscript.switchBook"],
+  bootstrapCommands: [
+    "loredock.enableManuscript",
+    "loredock.manuscript.createBook",
+    "loredock.manuscript.switchBook",
+    "loredock.manuscript.openBookProject",
+    "loredock.manuscript.deleteBookProject"
+  ],
   bootstrap(context) {
     const tree = getOrCreateTreeProvider();
+    const bookLibraryTree = getOrCreateBookLibraryTreeProvider();
     const projectWatcher = context.registerFileWatcher(
       new vscode.RelativePattern(context.workspaceFolder, ".loredock/project.json")
     );
     const refresh = () => {
-      void refreshManuscriptTree(tree);
+      void refreshManuscriptTree(tree, bookLibraryTree);
     };
 
-    void refreshManuscriptTree(tree);
+    void refreshManuscriptTree(tree, bookLibraryTree);
     return [
-      acquireSharedTreeRegistration(context, tree),
+      acquireSharedTreeRegistration(context, tree, bookLibraryTree),
       context.registerCommand("loredock.enableManuscript", () => enableManuscript(context)),
       context.registerCommand("loredock.manuscript.createBook", () => createBookProject(context)),
       context.registerCommand("loredock.manuscript.switchBook", () => switchBookProject()),
+      context.registerCommand("loredock.manuscript.openBookProject", (node) =>
+        openBookProject(tree, bookLibraryTree, node)
+      ),
+      context.registerCommand("loredock.manuscript.deleteBookProject", (node) =>
+        deleteBookProject(tree, bookLibraryTree, node)
+      ),
       projectWatcher,
       projectWatcher.onDidCreate(refresh),
       projectWatcher.onDidChange(refresh),
@@ -81,6 +103,7 @@ export const manuscriptCapability: Capability = {
       now: context.now
     });
     const tree = getOrCreateTreeProvider();
+    const bookLibraryTree = getOrCreateBookLibraryTreeProvider();
     const watcher = context.registerFileWatcher(new vscode.RelativePattern(context.workspaceFolder, "manuscript/**"));
 
     const disposables: vscode.Disposable[] = [
@@ -88,14 +111,20 @@ export const manuscriptCapability: Capability = {
       context.registerSchema({ id: MANUSCRIPT_SCHEMA_ID, version: MANUSCRIPT_SCHEMA_VERSION }),
       context.registerCapabilityService(MANUSCRIPT_CAPABILITY_ID, controller),
       controller.onDidChange(() => {
-        void refreshManuscriptTree(tree);
+        void refreshManuscriptTree(tree, bookLibraryTree);
       }),
       watcher,
-      watcher.onDidCreate((uri) => handleWatchedFile(context, controller, tree, uri)),
-      watcher.onDidChange((uri) => handleWatchedFile(context, controller, tree, uri)),
-      watcher.onDidDelete((uri) => handleWatchedFile(context, controller, tree, uri)),
+      watcher.onDidCreate((uri) => handleWatchedFile(context, controller, tree, bookLibraryTree, uri)),
+      watcher.onDidChange((uri) => handleWatchedFile(context, controller, tree, bookLibraryTree, uri)),
+      watcher.onDidDelete((uri) => handleWatchedFile(context, controller, tree, bookLibraryTree, uri)),
       context.registerCommand("loredock.manuscript.createBook", () => createBookProject(context)),
       context.registerCommand("loredock.manuscript.switchBook", () => switchBookProject()),
+      context.registerCommand("loredock.manuscript.openBookProject", (node) =>
+        openBookProject(tree, bookLibraryTree, node)
+      ),
+      context.registerCommand("loredock.manuscript.deleteBookProject", (node) =>
+        deleteBookProject(tree, bookLibraryTree, node)
+      ),
       context.registerCommand("loredock.manuscript.createVolume", () => createVolume(controller)),
       context.registerCommand("loredock.manuscript.createChapter", (node) => createChapter(controller, node)),
       context.registerCommand("loredock.manuscript.openChapter", (node) => openChapter(context, controller, node)),
@@ -120,41 +149,58 @@ export const manuscriptCapability: Capability = {
       context.registerCommand("loredock.manuscript.showStats", () => showStats(controller))
     ];
 
-    void syncBookAgentGuidesOnStartup(context, controller, tree);
+    void syncBookAgentGuidesOnStartup(context, controller, tree, bookLibraryTree);
     return disposables;
   }
 };
 
 function getOrCreateTreeProvider(): ManuscriptTreeProvider {
   if (!sharedTreeProvider) {
-    sharedTreeProvider = new ManuscriptTreeProvider();
+    sharedTreeProvider = new ManuscriptTreeProvider(undefined, sharedBookSelection);
   }
 
   return sharedTreeProvider;
 }
 
-function acquireSharedTreeRegistration(context: KernelContext, tree: ManuscriptTreeProvider): vscode.Disposable {
+function getOrCreateBookLibraryTreeProvider(): BookLibraryTreeProvider {
+  if (!sharedBookLibraryTreeProvider) {
+    sharedBookLibraryTreeProvider = new BookLibraryTreeProvider(undefined, sharedBookSelection);
+  }
+
+  return sharedBookLibraryTreeProvider;
+}
+
+function acquireSharedTreeRegistration(
+  context: KernelContext,
+  tree: ManuscriptTreeProvider,
+  bookLibraryTree: BookLibraryTreeProvider
+): vscode.Disposable {
   const key = context.workspaceFolder.uri.fsPath;
   sharedTreeWorkspaces.add(key);
 
   if (!sharedTreeRegistration) {
-    sharedTreeRegistration = vscode.window.registerTreeDataProvider(VIEW_ID, tree);
+    sharedTreeRegistration = vscode.window.registerTreeDataProvider(MANUSCRIPT_VIEW_ID, tree);
+  }
+
+  if (!sharedBookLibraryTreeRegistration) {
+    sharedBookLibraryTreeRegistration = vscode.window.registerTreeDataProvider(BOOK_LIBRARY_VIEW_ID, bookLibraryTree);
   }
 
   if (!sharedRefreshCommandRegistration) {
     sharedRefreshCommandRegistration = registerExclusiveCommand("loredock.manuscript.refreshTree", () =>
-      refreshManuscriptTree(tree)
+      refreshManuscriptTree(tree, bookLibraryTree)
     );
   }
 
   if (!sharedToggleTrashCommandRegistration) {
     sharedToggleTrashCommandRegistration = registerExclusiveCommand("loredock.manuscript.toggleTrash", async () => {
       tree.toggleTrashMode();
-      await refreshManuscriptTree(tree);
+      await refreshManuscriptTree(tree, bookLibraryTree);
     });
   }
 
   tree.refresh();
+  bookLibraryTree.refresh();
   let disposed = false;
   return {
     dispose() {
@@ -165,32 +211,42 @@ function acquireSharedTreeRegistration(context: KernelContext, tree: ManuscriptT
       disposed = true;
       sharedTreeWorkspaces.delete(key);
       tree.refresh();
+      bookLibraryTree.refresh();
 
       if (sharedTreeWorkspaces.size > 0) {
         return;
       }
 
       sharedTreeRegistration?.dispose();
+      sharedBookLibraryTreeRegistration?.dispose();
       sharedRefreshCommandRegistration?.dispose();
       sharedToggleTrashCommandRegistration?.dispose();
       sharedTreeRegistration = undefined;
+      sharedBookLibraryTreeRegistration = undefined;
       sharedRefreshCommandRegistration = undefined;
       sharedToggleTrashCommandRegistration = undefined;
       sharedTreeProvider = undefined;
+      sharedBookLibraryTreeProvider = undefined;
+      sharedBookSelection.clear();
     }
   };
 }
 
-async function refreshManuscriptTree(tree: ManuscriptTreeProvider): Promise<void> {
+async function refreshManuscriptTree(
+  tree: ManuscriptTreeProvider,
+  bookLibraryTree?: BookLibraryTreeProvider
+): Promise<void> {
   await updateManuscriptContext();
   await vscode.commands.executeCommand("setContext", MANUSCRIPT_TRASH_MODE_CONTEXT, tree.isTrashMode);
   tree.refresh();
+  bookLibraryTree?.refresh();
 }
 
 async function syncBookAgentGuidesOnStartup(
   context: KernelContext,
   controller: ManuscriptController,
-  tree: ManuscriptTreeProvider
+  tree: ManuscriptTreeProvider,
+  bookLibraryTree: BookLibraryTreeProvider
 ): Promise<void> {
   try {
     const titleSynced = await controller.syncBookTitleWithWorkspaceFolder();
@@ -215,7 +271,7 @@ async function syncBookAgentGuidesOnStartup(
   }
 
   await controller.refreshDiagnostics();
-  await refreshManuscriptTree(tree);
+  await refreshManuscriptTree(tree, bookLibraryTree);
 }
 
 async function updateManuscriptContext(): Promise<void> {
@@ -314,7 +370,7 @@ async function enableManuscript(context: KernelContext): Promise<void> {
   const confirmed = await context.confirmOperationPlan(plan);
   if (!confirmed) {
     context.output.appendLine("已取消启用手稿，未写入文件。");
-    await refreshManuscriptTree(getOrCreateTreeProvider());
+    await refreshManuscriptTree(getOrCreateTreeProvider(), getOrCreateBookLibraryTreeProvider());
     return;
   }
 
@@ -343,7 +399,7 @@ async function enableManuscript(context: KernelContext): Promise<void> {
   }
 
   await context.refreshWorkspaceFolder();
-  await refreshManuscriptTree(getOrCreateTreeProvider());
+  await refreshManuscriptTree(getOrCreateTreeProvider(), getOrCreateBookLibraryTreeProvider());
   void vscode.window.showInformationMessage("手稿已启用。");
 }
 
@@ -378,6 +434,67 @@ async function switchBookProject(): Promise<void> {
     return;
   }
   await vscode.commands.executeCommand("vscode.openFolder", folderUri, false);
+}
+
+async function openBookProject(
+  tree: ManuscriptTreeProvider,
+  bookLibraryTree: BookLibraryTreeProvider,
+  node: unknown
+): Promise<void> {
+  if (!isBookProjectNode(node)) {
+    await switchBookProject();
+    return;
+  }
+
+  if (node.workspaceFolder) {
+    tree.setActiveBookFolder(node.folderUri.fsPath);
+    bookLibraryTree.setActiveBookFolder(node.folderUri.fsPath);
+    return;
+  }
+
+  await vscode.commands.executeCommand("vscode.openFolder", node.folderUri, false);
+}
+
+async function deleteBookProject(
+  tree: ManuscriptTreeProvider,
+  bookLibraryTree: BookLibraryTreeProvider,
+  node: unknown
+): Promise<void> {
+  const target = getBookProjectDeleteTarget(node);
+  if (!target) {
+    void vscode.window.showWarningMessage("请先在书库中选择要删除的书籍项目。");
+    return;
+  }
+
+  const folderPath = target.folderUri.fsPath;
+  if (!(await isLoreDockBookFolder(folderPath))) {
+    void vscode.window.showWarningMessage("只能删除包含 LoreDock 项目清单和手稿清单的书籍文件夹。");
+    return;
+  }
+
+  const confirmedTitle = await vscode.window.showInputBox({
+    title: "确认删除整本书",
+    prompt: `输入书名“${target.title}”确认删除。文件夹会被递归直接删除。`,
+    validateInput: (value) => value === target.title ? undefined : "输入的书名不匹配。"
+  });
+  if (confirmedTitle !== target.title) {
+    return;
+  }
+
+  await vscode.workspace.fs.delete(target.folderUri, { recursive: true });
+  removeWorkspaceFolderIfOpen(target.folderUri);
+
+  const nextActiveFolder = (vscode.workspace.workspaceFolders ?? [])
+    .find((folder) => path.resolve(folder.uri.fsPath) !== path.resolve(folderPath));
+  if (nextActiveFolder) {
+    tree.setActiveBookFolder(nextActiveFolder.uri.fsPath);
+    bookLibraryTree.setActiveBookFolder(nextActiveFolder.uri.fsPath);
+  } else {
+    tree.refresh();
+    bookLibraryTree.refresh();
+  }
+
+  void vscode.window.showInformationMessage(`书籍“${target.title}”已删除。`);
 }
 
 async function initializeBookProject(context: KernelContext, folderUri: vscode.Uri, title: string): Promise<boolean> {
@@ -707,11 +824,12 @@ function handleWatchedFile(
   context: KernelContext,
   controller: ManuscriptController,
   tree: ManuscriptTreeProvider,
+  bookLibraryTree: BookLibraryTreeProvider,
   uri: vscode.Uri
 ): void {
   const relativePath = path.relative(context.workspaceFolder.uri.fsPath, uri.fsPath).replace(/\\/g, "/");
   controller.notifyFileChanged(relativePath);
-  void controller.refreshDiagnostics().then(() => refreshManuscriptTree(tree));
+  void controller.refreshDiagnostics().then(() => refreshManuscriptTree(tree, bookLibraryTree));
   context.output.appendLine(`手稿文件已变化：${relativePath}`);
 }
 
@@ -786,6 +904,32 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
+async function isLoreDockBookFolder(folderPath: string): Promise<boolean> {
+  try {
+    const stats = await fs.lstat(folderPath);
+    if (!stats.isDirectory()) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+
+  return (
+    (await pathExists(path.join(folderPath, MANIFEST_RELATIVE_PATH))) &&
+    (await pathExists(path.join(folderPath, MANUSCRIPT_MANIFEST_PATH)))
+  );
+}
+
+function removeWorkspaceFolderIfOpen(folderUri: vscode.Uri): void {
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  const index = folders.findIndex((folder) => path.resolve(folder.uri.fsPath) === path.resolve(folderUri.fsPath));
+  if (index < 0 || folders.length <= 1) {
+    return;
+  }
+
+  vscode.workspace.updateWorkspaceFolders(index, 1);
+}
+
 function normalizeBookFolderName(value: string): string {
   const clean = value.trim();
   if (
@@ -807,6 +951,24 @@ function isNotFound(error: unknown): boolean {
 
 function isVolumeNode(node: unknown): node is Extract<ManuscriptTreeNode, { kind: "volume" }> {
   return isTreeNode(node, "volume");
+}
+
+function isBookProjectNode(node: unknown): node is Extract<ManuscriptTreeNode, { kind: "bookProject" }> {
+  return isTreeNode(node, "bookProject");
+}
+
+function isBookNode(node: unknown): node is Extract<ManuscriptTreeNode, { kind: "book" }> {
+  return isTreeNode(node, "book");
+}
+
+function getBookProjectDeleteTarget(node: unknown): { folderUri: vscode.Uri; title: string } | undefined {
+  if (isBookProjectNode(node)) {
+    return { folderUri: node.folderUri, title: node.title };
+  }
+  if (isBookNode(node)) {
+    return { folderUri: node.workspaceFolder.uri, title: node.title };
+  }
+  return undefined;
 }
 
 function isChapterNode(node: unknown): node is Extract<ManuscriptTreeNode, { kind: "chapter" }> {

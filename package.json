@@ -21,6 +21,8 @@
     "onCommand:loredock.enableManuscript",
     "onCommand:loredock.manuscript.createBook",
     "onCommand:loredock.manuscript.switchBook",
+    "onCommand:loredock.manuscript.openBookProject",
+    "onCommand:loredock.manuscript.deleteBookProject",
     "onCommand:loredock.manuscript.refreshBookAgentGuide",
     "onCommand:loredock.enableStoryBible",
     "onCommand:loredock.storyBible.openGallery",
@@ -67,6 +69,16 @@
         "command": "loredock.manuscript.switchBook",
         "title": "LoreDock：切换书籍",
         "icon": "$(folder-opened)"
+      },
+      {
+        "command": "loredock.manuscript.openBookProject",
+        "title": "LoreDock：打开书籍项目",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "loredock.manuscript.deleteBookProject",
+        "title": "LoreDock：删除书籍项目",
+        "icon": "$(trash)"
       },
       {
         "command": "loredock.manuscript.createVolume",
@@ -142,7 +154,7 @@
       },
       {
         "command": "loredock.manuscript.refreshTree",
-        "title": "LoreDock：刷新手稿",
+        "title": "LoreDock：刷新",
         "icon": "$(refresh)"
       },
       {
@@ -283,6 +295,10 @@
     "views": {
       "loredock": [
         {
+          "id": "loredock.bookLibrary.tree",
+          "name": "书库"
+        },
+        {
           "id": "loredock.manuscript.tree",
           "name": "手稿"
         },
@@ -294,6 +310,21 @@
     },
     "menus": {
       "view/title": [
+        {
+          "command": "loredock.manuscript.createBook",
+          "when": "view == loredock.bookLibrary.tree",
+          "group": "navigation"
+        },
+        {
+          "command": "loredock.manuscript.switchBook",
+          "when": "view == loredock.bookLibrary.tree",
+          "group": "navigation"
+        },
+        {
+          "command": "loredock.manuscript.refreshTree",
+          "when": "view == loredock.bookLibrary.tree",
+          "group": "navigation"
+        },
         {
           "command": "loredock.enableManuscript",
           "when": "view == loredock.manuscript.tree && !loredock.manuscript.active",
@@ -357,6 +388,16 @@
       ],
       "view/item/context": [
         {
+          "command": "loredock.manuscript.openBookProject",
+          "when": "view == loredock.bookLibrary.tree && viewItem == loredock.manuscript.bookProject",
+          "group": "inline"
+        },
+        {
+          "command": "loredock.manuscript.deleteBookProject",
+          "when": "view == loredock.bookLibrary.tree && viewItem == loredock.manuscript.bookProject",
+          "group": "inline"
+        },
+        {
           "command": "loredock.manuscript.createVolume",
           "when": "view == loredock.manuscript.tree && viewItem == loredock.manuscript.book",
           "group": "inline"
@@ -367,6 +408,10 @@
         },
         {
           "command": "loredock.manuscript.refreshBookAgentGuide",
+          "when": "view == loredock.manuscript.tree && viewItem == loredock.manuscript.book"
+        },
+        {
+          "command": "loredock.manuscript.deleteBookProject",
           "when": "view == loredock.manuscript.tree && viewItem == loredock.manuscript.book"
         },
         {

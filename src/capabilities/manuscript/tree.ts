@@ -1,3 +1,4 @@
+import * as fs from "fs/promises";
 import * as path from "path";
 import * as vscode from "vscode";
 import { inspectExistingWorkspacePath } from "../../kernel/safeWorkspacePath";
@@ -15,6 +16,14 @@ import {
 
 export type ManuscriptTreeNode =
   | { kind: "workspace"; workspaceFolder: vscode.WorkspaceFolder; title: string; description?: string }
+  | {
+      kind: "bookProject";
+      folderUri: vscode.Uri;
+      workspaceFolder?: vscode.WorkspaceFolder;
+      title: string;
+      description?: string;
+      active: boolean;
+    }
   | { kind: "book"; workspaceFolder: vscode.WorkspaceFolder; id: BookId; title: string }
   | { kind: "volume"; workspaceFolder: vscode.WorkspaceFolder; id: VolumeId; title: string }
   | { kind: "chapter"; workspaceFolder: vscode.WorkspaceFolder; id: ChapterId; title: string; path: string; status: string }
@@ -24,15 +33,65 @@ export type ManuscriptTreeNode =
   | { kind: "action"; workspaceFolder: vscode.WorkspaceFolder; title: string; description?: string; command: string; icon: string }
   | { kind: "empty"; workspaceFolder?: vscode.WorkspaceFolder; title: string; description?: string };
 
+export class BookSelectionState {
+  private activeBookFolderPath: string | undefined;
+
+  public setActiveBookFolder(folderPath: string): void {
+    this.activeBookFolderPath = path.resolve(folderPath);
+  }
+
+  public clear(): void {
+    this.activeBookFolderPath = undefined;
+  }
+
+  public activeWorkspaceFolder(workspaceFolders: readonly vscode.WorkspaceFolder[]): vscode.WorkspaceFolder | undefined {
+    const activePath = this.activeBookFolderPath;
+    if (!activePath) {
+      return undefined;
+    }
+    return workspaceFolders.find((folder) => path.resolve(folder.uri.fsPath) === activePath);
+  }
+
+  public isActiveBookFolder(folderPath: string, workspaceFolders: readonly vscode.WorkspaceFolder[]): boolean {
+    const activePath = this.activePath(workspaceFolders);
+    return activePath ? path.resolve(folderPath) === path.resolve(activePath) : false;
+  }
+
+  private activePath(workspaceFolders: readonly vscode.WorkspaceFolder[]): string | undefined {
+    if (
+      this.activeBookFolderPath &&
+      workspaceFolders.some((folder) => path.resolve(folder.uri.fsPath) === this.activeBookFolderPath)
+    ) {
+      return this.activeBookFolderPath;
+    }
+    return workspaceFolders[0]?.uri.fsPath;
+  }
+}
+
 export class ManuscriptTreeProvider implements vscode.TreeDataProvider<ManuscriptTreeNode> {
   private readonly emitter = new vscode.EventEmitter<ManuscriptTreeNode | undefined>();
+  private readonly fixedWorkspaceFolders?: readonly vscode.WorkspaceFolder[];
   private mode: "active" | "trash" = "active";
   public readonly onDidChangeTreeData = this.emitter.event;
 
-  public constructor(private readonly fixedWorkspaceFolder?: vscode.WorkspaceFolder) {}
+  public constructor(
+    fixedWorkspaceFolder?: vscode.WorkspaceFolder | readonly vscode.WorkspaceFolder[],
+    protected readonly selection = new BookSelectionState()
+  ) {
+    this.fixedWorkspaceFolders = fixedWorkspaceFolder
+      ? Array.isArray(fixedWorkspaceFolder)
+        ? fixedWorkspaceFolder
+        : [fixedWorkspaceFolder]
+      : undefined;
+  }
 
   public refresh(): void {
     this.emitter.fire(undefined);
+  }
+
+  public setActiveBookFolder(folderPath: string): void {
+    this.selection.setActiveBookFolder(folderPath);
+    this.refresh();
   }
 
   public toggleTrashMode(): "active" | "trash" {
@@ -64,19 +123,112 @@ export class ManuscriptTreeProvider implements vscode.TreeDataProvider<Manuscrip
       return [{ kind: "empty", title: "当前没有打开工作区" }];
     }
 
-    if (folders.length === 1) {
-      return this.getWorkspaceRootNodes(folders[0]);
-    }
-
-    return folders.map((workspaceFolder) => ({
-      kind: "workspace" as const,
-      workspaceFolder,
-      title: workspaceFolder.name,
-      description: workspaceFolder.uri.fsPath
-    }));
+    const activeWorkspaceFolder = this.activeWorkspaceFolder ?? folders[0];
+    return this.getWorkspaceRootNodes(activeWorkspaceFolder);
   }
 
-  private async getWorkspaceRootNodes(workspaceFolder: vscode.WorkspaceFolder): Promise<ManuscriptTreeNode[]> {
+  protected async getBookProjectNodes(): Promise<ManuscriptTreeNode[]> {
+    const candidates = await this.discoverBookProjectCandidates();
+    const nodes = await Promise.all(candidates.map((candidate) => this.createBookProjectNode(candidate)));
+    return nodes
+      .filter((node): node is Extract<ManuscriptTreeNode, { kind: "bookProject" }> => Boolean(node))
+      .sort((left, right) => left.title.localeCompare(right.title, "zh-CN"));
+  }
+
+  protected async discoverBookProjectCandidates(): Promise<BookProjectCandidate[]> {
+    const candidates = new Map<string, BookProjectCandidate>();
+    const addCandidate = (folderUri: vscode.Uri, workspaceFolder?: vscode.WorkspaceFolder): void => {
+      candidates.set(path.resolve(folderUri.fsPath), { folderUri, workspaceFolder });
+    };
+
+    for (const workspaceFolder of this.workspaceFolders) {
+      addCandidate(workspaceFolder.uri, workspaceFolder);
+    }
+
+    const parentPaths = new Set(this.workspaceFolders.map((folder) => path.dirname(folder.uri.fsPath)));
+    for (const parentPath of parentPaths) {
+      const entries = await readDirectoryEntries(parentPath);
+      for (const entry of entries) {
+        if (!entry.isDirectory()) {
+          continue;
+        }
+
+        const folderPath = path.join(parentPath, entry.name);
+        if (await looksLikeLoreDockBookFolder(folderPath)) {
+          addCandidate(vscode.Uri.file(folderPath));
+        }
+      }
+    }
+
+    return [...candidates.values()];
+  }
+
+  protected async createBookProjectNode(candidate: BookProjectCandidate): Promise<ManuscriptTreeNode | undefined> {
+    const workspaceRoot = candidate.folderUri.fsPath;
+    const projectManifest = await inspectExistingWorkspacePath(workspaceRoot, MANIFEST_RELATIVE_PATH);
+    if (projectManifest.status === "missing") {
+      if (!candidate.workspaceFolder) {
+        return undefined;
+      }
+      return {
+        kind: "bookProject",
+        folderUri: candidate.folderUri,
+        workspaceFolder: candidate.workspaceFolder,
+        title: candidate.workspaceFolder.name,
+        description: this.isActiveBookFolder(candidate.folderUri.fsPath) ? "当前书" : "未初始化",
+        active: this.isActiveBookFolder(candidate.folderUri.fsPath)
+      };
+    }
+
+    if (projectManifest.status === "unsafe") {
+      if (!candidate.workspaceFolder) {
+        return undefined;
+      }
+      return {
+        kind: "bookProject",
+        folderUri: candidate.folderUri,
+        workspaceFolder: candidate.workspaceFolder,
+        title: candidate.workspaceFolder.name,
+        description: this.isActiveBookFolder(candidate.folderUri.fsPath) ? "当前书" : "项目清单不安全",
+        active: this.isActiveBookFolder(candidate.folderUri.fsPath)
+      };
+    }
+
+    const result = await readManuscriptManifestStructure(workspaceRoot);
+    if (result.status === "valid") {
+      const folderName = path.basename(workspaceRoot);
+      return {
+        kind: "bookProject",
+        folderUri: candidate.folderUri,
+        workspaceFolder: candidate.workspaceFolder,
+        title: result.manifest.book.title,
+        description: this.isActiveBookFolder(candidate.folderUri.fsPath)
+          ? "当前书"
+          : result.manifest.book.title === folderName
+            ? "书籍文件夹"
+            : folderName,
+        active: this.isActiveBookFolder(candidate.folderUri.fsPath)
+      };
+    }
+
+    if (!candidate.workspaceFolder) {
+      return undefined;
+    }
+    return {
+      kind: "bookProject",
+      folderUri: candidate.folderUri,
+      workspaceFolder: candidate.workspaceFolder,
+      title: candidate.workspaceFolder.name,
+      description: this.isActiveBookFolder(candidate.folderUri.fsPath)
+        ? "当前书"
+        : result.status === "missing"
+          ? "未启用手稿"
+          : "手稿需要修复",
+      active: this.isActiveBookFolder(candidate.folderUri.fsPath)
+    };
+  }
+
+  protected async getWorkspaceRootNodes(workspaceFolder: vscode.WorkspaceFolder): Promise<ManuscriptTreeNode[]> {
     const projectManifest = await inspectExistingWorkspacePath(workspaceFolder.uri.fsPath, MANIFEST_RELATIVE_PATH);
     if (projectManifest.status === "missing") {
       return [
@@ -205,6 +357,22 @@ export class ManuscriptTreeProvider implements vscode.TreeDataProvider<Manuscrip
           vscode.TreeItemCollapsibleState.Expanded,
           "root-folder"
         );
+      case "bookProject": {
+        const item = treeItem(
+          element.title,
+          "loredock.manuscript.bookProject",
+          vscode.TreeItemCollapsibleState.None,
+          element.active ? "check" : "book"
+        );
+        item.description = element.description;
+        item.tooltip = `${element.title}\n${element.folderUri.fsPath}`;
+        item.command = {
+          command: "loredock.manuscript.openBookProject",
+          title: "打开书籍项目",
+          arguments: [element]
+        };
+        return item;
+      }
       case "book":
         return treeItem(element.title, "loredock.manuscript.book", vscode.TreeItemCollapsibleState.Expanded, "book");
       case "volume":
@@ -260,9 +428,39 @@ export class ManuscriptTreeProvider implements vscode.TreeDataProvider<Manuscrip
     }
   }
 
-  private get workspaceFolders(): readonly vscode.WorkspaceFolder[] {
-    return this.fixedWorkspaceFolder ? [this.fixedWorkspaceFolder] : vscode.workspace.workspaceFolders ?? [];
+  protected get workspaceFolders(): readonly vscode.WorkspaceFolder[] {
+    return this.fixedWorkspaceFolders ?? vscode.workspace.workspaceFolders ?? [];
   }
+
+  protected get activeWorkspaceFolder(): vscode.WorkspaceFolder | undefined {
+    return this.selection.activeWorkspaceFolder(this.workspaceFolders);
+  }
+
+  protected isActiveBookFolder(folderPath: string): boolean {
+    return this.selection.isActiveBookFolder(folderPath, this.workspaceFolders);
+  }
+}
+
+export class BookLibraryTreeProvider extends ManuscriptTreeProvider {
+  public override async getChildren(element?: ManuscriptTreeNode): Promise<ManuscriptTreeNode[]> {
+    if (element) {
+      return [];
+    }
+
+    if (this.workspaceFolders.length === 0) {
+      return [{ kind: "empty", title: "当前没有打开工作区" }];
+    }
+
+    const bookProjects = await this.getBookProjectNodes();
+    return bookProjects.length > 0
+      ? bookProjects
+      : [{ kind: "empty", title: "未发现书籍项目" }];
+  }
+}
+
+interface BookProjectCandidate {
+  folderUri: vscode.Uri;
+  workspaceFolder?: vscode.WorkspaceFolder;
 }
 
 function treeItem(
@@ -318,4 +516,28 @@ function formatDeletedAt(value: string): string {
     hour: "2-digit",
     minute: "2-digit"
   });
+}
+
+async function looksLikeLoreDockBookFolder(folderPath: string): Promise<boolean> {
+  return (
+    (await pathExists(path.join(folderPath, MANIFEST_RELATIVE_PATH))) &&
+    (await pathExists(path.join(folderPath, "manuscript/manifest.json")))
+  );
+}
+
+async function readDirectoryEntries(parentPath: string): Promise<import("fs").Dirent[]> {
+  try {
+    return await fs.readdir(parentPath, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }

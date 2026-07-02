@@ -15,7 +15,11 @@ import {
   readManuscriptManifest,
   stringifyManuscriptManifest
 } from "../capabilities/manuscript/manifest";
-import { ManuscriptTreeProvider } from "../capabilities/manuscript/tree";
+import {
+  BookLibraryTreeProvider,
+  BookSelectionState,
+  ManuscriptTreeProvider
+} from "../capabilities/manuscript/tree";
 import {
   MANUSCRIPT_MANIFEST_PATH,
   MANUSCRIPT_SCHEMA_VERSION,
@@ -447,6 +451,13 @@ suite("Manuscript", () => {
       assert.equal(activeNodes.some((node) => node.kind === "book" && node.title === "第一本书"), true);
       assert.equal(activeNodes.some((node) => node.kind === "notes" && node.title === "笔记"), true);
 
+      const bookLibraryTree = new BookLibraryTreeProvider(workspaceFolder);
+      const bookLibraryNodes = await bookLibraryTree.getChildren();
+      assert.equal(
+        bookLibraryNodes.some((node) => node.kind === "bookProject" && node.title === "第一本书"),
+        true
+      );
+
       const chapter = (await controller.listChapters())[0];
       await controller.deleteChapter(chapter.id);
       activeTree.toggleTrashMode();
@@ -456,10 +467,93 @@ suite("Manuscript", () => {
       await fs.rm(emptyWorkspace, { recursive: true, force: true });
     }
   });
+
+  test("discovers clickable sibling book folders in the book library", async () => {
+    const libraryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "loredock-book-library-"));
+    const firstWorkspace = path.join(libraryRoot, "first-book");
+    const secondWorkspace = path.join(libraryRoot, "second-book");
+    try {
+      await fs.mkdir(firstWorkspace, { recursive: true });
+      await fs.mkdir(secondWorkspace, { recursive: true });
+      await writeInitialManuscript(firstWorkspace, "第一本书");
+      await writeInitialManuscript(secondWorkspace, "第二本书");
+      await fs.mkdir(path.join(firstWorkspace, ".loredock"), { recursive: true });
+      await fs.writeFile(path.join(firstWorkspace, ".loredock/project.json"), "{}\n", "utf8");
+      await fs.mkdir(path.join(secondWorkspace, ".loredock"), { recursive: true });
+      await fs.writeFile(path.join(secondWorkspace, ".loredock/project.json"), "{}\n", "utf8");
+
+      const bookLibraryTree = new BookLibraryTreeProvider(createWorkspaceFolder(firstWorkspace));
+      const bookNodes = await bookLibraryTree.getChildren();
+      const firstBook = bookNodes.find(
+        (node): node is Extract<ManuscriptTreeNodeForTest, { kind: "bookProject" }> =>
+          node.kind === "bookProject" && node.title === "第一本书"
+      );
+      const secondBook = bookNodes.find(
+        (node): node is Extract<ManuscriptTreeNodeForTest, { kind: "bookProject" }> =>
+          node.kind === "bookProject" && node.title === "第二本书"
+      );
+
+      assert.ok(firstBook);
+      assert.equal(firstBook.description, "当前书");
+      assert.equal((bookLibraryTree.getTreeItem(firstBook).iconPath as vscode.ThemeIcon).id, "check");
+      assert.ok(secondBook);
+      const item = bookLibraryTree.getTreeItem(secondBook);
+      assert.equal(item.command?.command, "loredock.manuscript.openBookProject");
+      assert.equal(
+        (item.command?.arguments?.[0] as Extract<ManuscriptTreeNodeForTest, { kind: "bookProject" }>).folderUri.fsPath,
+        secondWorkspace
+      );
+    } finally {
+      await fs.rm(libraryRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("marks the selected open book and shows its manuscript nodes", async () => {
+    const libraryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "loredock-open-book-library-"));
+    const firstWorkspace = path.join(libraryRoot, "first-book");
+    const secondWorkspace = path.join(libraryRoot, "second-book");
+    try {
+      await fs.mkdir(firstWorkspace, { recursive: true });
+      await fs.mkdir(secondWorkspace, { recursive: true });
+      await writeInitialManuscript(firstWorkspace, "第一本书");
+      await writeInitialManuscript(secondWorkspace, "第二本书");
+      await fs.mkdir(path.join(firstWorkspace, ".loredock"), { recursive: true });
+      await fs.writeFile(path.join(firstWorkspace, ".loredock/project.json"), "{}\n", "utf8");
+      await fs.mkdir(path.join(secondWorkspace, ".loredock"), { recursive: true });
+      await fs.writeFile(path.join(secondWorkspace, ".loredock/project.json"), "{}\n", "utf8");
+
+      const selection = new BookSelectionState();
+      const multiTree = new ManuscriptTreeProvider([
+        createWorkspaceFolder(firstWorkspace),
+        createWorkspaceFolder(secondWorkspace)
+      ], selection);
+      const bookLibraryTree = new BookLibraryTreeProvider([
+        createWorkspaceFolder(firstWorkspace),
+        createWorkspaceFolder(secondWorkspace)
+      ], selection);
+      bookLibraryTree.setActiveBookFolder(secondWorkspace);
+
+      const rootNodes = await multiTree.getChildren();
+      const bookNodes = await bookLibraryTree.getChildren();
+      const selectedBook = bookNodes.find(
+        (node): node is Extract<ManuscriptTreeNodeForTest, { kind: "bookProject" }> =>
+          node.kind === "bookProject" && node.title === "第二本书"
+      );
+
+      assert.ok(selectedBook);
+      assert.equal(selectedBook.description, "当前书");
+      assert.equal((bookLibraryTree.getTreeItem(selectedBook).iconPath as vscode.ThemeIcon).id, "check");
+      assert.equal(rootNodes.some((node) => node.kind === "book" && node.title === "第二本书"), true);
+    } finally {
+      await fs.rm(libraryRoot, { recursive: true, force: true });
+    }
+  });
 });
 
-async function writeInitialManuscript(workspace: string): Promise<void> {
-  const manifest = createInitialManuscriptManifest(new Date("2026-06-29T00:00:00.000Z"));
+type ManuscriptTreeNodeForTest = Awaited<ReturnType<ManuscriptTreeProvider["getChildren"]>>[number];
+
+async function writeInitialManuscript(workspace: string, title?: string): Promise<void> {
+  const manifest = createInitialManuscriptManifest(new Date("2026-06-29T00:00:00.000Z"), title);
   const volume = manifest.volumes[manifest.volumeIds[0]];
   const chapter = manifest.chapters[volume.chapterIds[0]];
 
