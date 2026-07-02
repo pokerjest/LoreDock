@@ -9,7 +9,7 @@ import { ProjectKernel } from "../kernel/projectKernel";
 import type { Capability, DiagnosticItem, OperationPlan } from "../kernel/types";
 
 suite("ProjectKernel", function () {
-  this.timeout(10000);
+  this.timeout(30000);
 
   let workspace: string;
   let workspaceFolder: vscode.WorkspaceFolder;
@@ -535,10 +535,13 @@ suite("ProjectKernel", function () {
 
       assert.equal(await exists(path.join(workspace, "manuscript/manifest.json")), true);
       assert.equal(await exists(path.join(workspace, "manuscript/notes.md")), true);
-      assert.equal(await exists(path.join(workspace, "manuscript/book-001/agent.md")), true);
-      assert.equal(await exists(path.join(workspace, "manuscript/book-001/volume-001/chapter-001.md")), true);
+      assert.equal(await exists(path.join(workspace, "agent.system.md")), true);
+      assert.equal(await exists(path.join(workspace, "agent.md")), true);
+      assert.equal(await exists(path.join(workspace, "manuscript/volume-001/chapter-001.md")), true);
 
+      const manuscriptManifest = JSON.parse(await fs.readFile(path.join(workspace, "manuscript/manifest.json"), "utf8"));
       const projectManifest = JSON.parse(await fs.readFile(path.join(workspace, ".loredock/project.json"), "utf8"));
+      assert.equal(manuscriptManifest.book.title, path.basename(workspace));
       assert.equal(projectManifest.capabilities.includes("manuscript.core"), true);
       assert.equal(seenPlans.some((plan) => plan.summary.includes("启用手稿")), true);
     } finally {

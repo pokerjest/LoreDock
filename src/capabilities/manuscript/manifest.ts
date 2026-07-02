@@ -2,7 +2,8 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { LOREDOCK_DIR, type DiagnosticItem } from "../../kernel/types";
 import { normalizeRelativePath } from "../../kernel/operationPlan";
-import { bookAgentPath, bookAgentPaths, inspectBookAgentSystemRules } from "./bookAgent";
+import { inspectExistingWorkspacePath } from "../../kernel/safeWorkspacePath";
+import { bookAgentPath, bookAgentPaths, bookSystemAgentPath, inspectBookSystemAgentText } from "./bookAgent";
 import { createBookId, createChapterId, createVolumeId } from "./ids";
 import {
   MANUSCRIPT_DIR,
@@ -30,30 +31,23 @@ export type ManuscriptManifestReadResult =
   | { status: "degraded"; diagnostics: DiagnosticItem[] }
   | { status: "valid"; diagnostics: DiagnosticItem[]; manifest: ManuscriptManifest };
 
-export function createInitialManuscriptManifest(now = new Date()): ManuscriptManifest {
+export function createInitialManuscriptManifest(now = new Date(), bookTitle = "第一本书"): ManuscriptManifest {
   const timestamp = now.toISOString();
   const bookId = createBookId();
   const volumeId = createVolumeId();
   const chapterId = createChapterId();
-  const bookPath = `${MANUSCRIPT_DIR}/book-001`;
-  const volumePath = `${bookPath}/volume-001`;
+  const volumePath = `${MANUSCRIPT_DIR}/volume-001`;
 
   return {
     schemaVersion: MANUSCRIPT_SCHEMA_VERSION,
-    bookIds: [bookId],
-    books: {
-      [bookId]: {
-        id: bookId,
-        title: "第一本书",
-        path: bookPath,
-        volumeIds: [volumeId],
-        nextVolumeNumber: 2
-      }
+    book: {
+      id: bookId,
+      title: bookTitle.trim() || "第一本书"
     },
+    volumeIds: [volumeId],
     volumes: {
       [volumeId]: {
         id: volumeId,
-        bookId,
         title: "第一卷",
         path: volumePath,
         chapterIds: [chapterId],
@@ -71,7 +65,6 @@ export function createInitialManuscriptManifest(now = new Date()): ManuscriptMan
         updatedAt: timestamp
       }
     },
-    nextBookNumber: 2,
     createdAt: timestamp,
     updatedAt: timestamp,
     trash: {
@@ -162,6 +155,15 @@ export function validateManuscriptManifest(
     return { diagnostics };
   }
 
+  if ("bookIds" in value || "books" in value || "nextBookNumber" in value) {
+    add(
+      "error",
+      "manuscript.manifest.legacyMultiBook.unsupported",
+      "检测到 pre-1.0 多书手稿结构。当前版本采用“一个工作区文件夹 = 一本书 = 一套故事圣经”，请为每本书创建独立文件夹并重新初始化 LoreDock。"
+    );
+    return { diagnostics };
+  }
+
   if (value.schemaVersion !== MANUSCRIPT_SCHEMA_VERSION) {
     add(
       "error",
@@ -178,40 +180,19 @@ export function validateManuscriptManifest(
     add("error", "manuscript.manifest.updatedAt.invalid", "updatedAt 必须是 ISO 时间戳字符串。");
   }
 
-  if (!isPositiveInteger(value.nextBookNumber)) {
-    add("error", "manuscript.manifest.nextBookNumber.invalid", "nextBookNumber 必须是正整数。");
-  }
-
-  const bookIds = parseIdArray<BookId>(value.bookIds, "bookIds", add);
-  const books = parseRecord<ManuscriptBook>(value.books, "books", parseBook, add);
+  const book = parseBook(value.book, "book", add);
+  const volumeIds = parseIdArray<VolumeId>(value.volumeIds, "volumeIds", add);
   const volumes = parseRecord<ManuscriptVolume>(value.volumes, "volumes", parseVolume, add);
   const chapters = parseRecord<ManuscriptChapter>(value.chapters, "chapters", parseChapter, add);
   const trash = parseTrash(value.trash, add);
 
-  validateIdUniqueness(bookIds, "book list", add);
-  validateIdUniqueness(Object.values(books).map((item) => item.id), "book", add);
+  validateIdUniqueness(volumeIds, "volume list", add);
   validateIdUniqueness(Object.values(volumes).map((item) => item.id), "volume", add);
   validateIdUniqueness(Object.values(chapters).map((item) => item.id), "chapter", add);
 
-  for (const id of bookIds) {
-    if (!books[id]) {
-      add("error", "manuscript.book.reference.missing", `bookIds 引用了缺失的书籍 "${id}"。`);
-    }
-  }
-
-  for (const [key, book] of Object.entries(books)) {
-    if (key !== book.id) {
-      add("error", "manuscript.book.keyMismatch", `书籍键 "${key}" 与 id "${book.id}" 不一致。`);
-    }
-
-    validateManuscriptRelativePath(book.path, `书籍“${book.title}”路径`, add);
-    for (const volumeId of book.volumeIds) {
-      const volume = volumes[volumeId];
-      if (!volume) {
-        add("error", "manuscript.volume.reference.missing", `书籍 "${book.id}" 引用了缺失的卷 "${volumeId}"。`);
-      } else if (volume.bookId !== book.id) {
-        add("error", "manuscript.volume.bookId.mismatch", `卷 "${volumeId}" 的 bookId 不匹配。`);
-      }
+  for (const id of volumeIds) {
+    if (!volumes[id]) {
+      add("error", "manuscript.volume.reference.missing", `volumeIds 引用了缺失的卷 "${id}"。`);
     }
   }
 
@@ -220,8 +201,8 @@ export function validateManuscriptManifest(
       add("error", "manuscript.volume.keyMismatch", `卷键 "${key}" 与 id "${volume.id}" 不一致。`);
     }
 
-    if (!books[volume.bookId]) {
-      add("error", "manuscript.volume.bookId.missing", `卷 "${volume.id}" 引用了缺失的书籍 "${volume.bookId}"。`);
+    if (!volumeIds.includes(volume.id)) {
+      add("warning", "manuscript.volume.unlisted", `卷 "${volume.id}" 未出现在 volumeIds 中。`);
     }
 
     validateManuscriptRelativePath(volume.path, `卷“${volume.title}”路径`, add);
@@ -260,11 +241,10 @@ export function validateManuscriptManifest(
     diagnostics,
     manifest: {
       schemaVersion: MANUSCRIPT_SCHEMA_VERSION,
-      bookIds,
-      books,
+      book: book as ManuscriptBook,
+      volumeIds,
       volumes,
       chapters,
-      nextBookNumber: value.nextBookNumber as number,
       createdAt: value.createdAt as string,
       updatedAt: value.updatedAt as string,
       trash
@@ -319,7 +299,7 @@ async function validateManuscriptFiles(
   const diagnostics: DiagnosticItem[] = [];
   const manifestPaths = new Set(Object.values(manifest.chapters).map((chapter) => normalizeRelativePath(chapter.path)));
   const notesPath = normalizeRelativePath(MANUSCRIPT_NOTES_PATH);
-  const agentPaths = bookAgentPaths(manifest);
+  const agentPaths = bookAgentPaths();
 
   const notesInspection = await inspectExistingManuscriptPath(workspaceRoot, notesPath);
   if (notesInspection.status === "missing") {
@@ -355,69 +335,8 @@ async function validateManuscriptFiles(
     }
   }
 
-  for (const book of Object.values(manifest.books)) {
-    const agentPath = bookAgentPath(book.path);
-    const inspection = await inspectExistingManuscriptPath(workspaceRoot, agentPath);
-    if (inspection.status === "missing") {
-      diagnostics.push(
-        diagnostic(workspaceRoot, "warning", "manuscript.book.agent.missing", `书籍 AI 指南 "${agentPath}" 缺失。`, agentPath)
-      );
-      continue;
-    }
-
-    if (inspection.status === "unsafe") {
-      diagnostics.push(
-        diagnostic(
-          workspaceRoot,
-          "warning",
-          "manuscript.book.agent.unsafePath",
-          `书籍 AI 指南 "${agentPath}" 解析到了工作区之外，或经过了不安全的符号链接。`,
-          agentPath
-        )
-      );
-      continue;
-    }
-
-    try {
-      const stats = await fs.stat(inspection.absolutePath);
-      if (!stats.isFile()) {
-        diagnostics.push(
-          diagnostic(workspaceRoot, "warning", "manuscript.book.agent.notFile", `书籍 AI 指南 "${agentPath}" 不是文件。`, agentPath)
-        );
-      } else {
-        const systemRulesIssue = inspectBookAgentSystemRules(await fs.readFile(inspection.absolutePath, "utf8"), book.path);
-        if (systemRulesIssue === "missing") {
-          diagnostics.push(
-            diagnostic(
-              workspaceRoot,
-              "warning",
-              "manuscript.book.agent.systemRules.missing",
-              `书籍 AI 指南 "${agentPath}" 缺少只读系统规则块。`,
-              agentPath
-            )
-          );
-        } else if (systemRulesIssue === "modified") {
-          diagnostics.push(
-            diagnostic(
-              workspaceRoot,
-              "warning",
-              "manuscript.book.agent.systemRules.modified",
-              `书籍 AI 指南 "${agentPath}" 的只读系统规则块已被修改。`,
-              agentPath
-            )
-          );
-        }
-      }
-    } catch (error) {
-      if (isNotFound(error)) {
-        diagnostics.push(
-          diagnostic(workspaceRoot, "warning", "manuscript.book.agent.missing", `书籍 AI 指南 "${agentPath}" 缺失。`, agentPath)
-        );
-      } else {
-        throw error;
-      }
-    }
-  }
+  await validateBookSystemAgentFile(manifest.book, workspaceRoot, diagnostics);
+  await validateBookUserAgentFile(workspaceRoot, diagnostics);
 
   for (const chapter of Object.values(manifest.chapters)) {
     const inspection = await inspectExistingManuscriptPath(workspaceRoot, chapter.path);
@@ -474,6 +393,145 @@ async function validateManuscriptFiles(
   return diagnostics;
 }
 
+async function validateBookSystemAgentFile(
+  book: ManuscriptBook,
+  workspaceRoot: string,
+  diagnostics: DiagnosticItem[]
+): Promise<void> {
+  const agentPath = bookSystemAgentPath();
+  const inspection = await inspectExistingWorkspacePath(workspaceRoot, agentPath);
+  if (inspection.status === "missing") {
+    diagnostics.push(
+      diagnostic(
+        workspaceRoot,
+        "warning",
+        "manuscript.book.agent.system.missing",
+        `书籍系统 AI 指南 "${agentPath}" 缺失。`,
+        agentPath
+      )
+    );
+    return;
+  }
+
+  if (inspection.status === "unsafe") {
+    diagnostics.push(
+      diagnostic(
+        workspaceRoot,
+        "warning",
+        "manuscript.book.agent.system.unsafePath",
+        `书籍系统 AI 指南 "${agentPath}" 解析到了工作区之外，或经过了不安全的符号链接。`,
+        agentPath
+      )
+    );
+    return;
+  }
+
+  try {
+    const stats = await fs.stat(inspection.absolutePath);
+    if (!stats.isFile()) {
+      diagnostics.push(
+        diagnostic(
+          workspaceRoot,
+          "warning",
+          "manuscript.book.agent.system.notFile",
+          `书籍系统 AI 指南 "${agentPath}" 不是文件。`,
+          agentPath
+        )
+      );
+      return;
+    }
+
+    const systemRulesIssue = inspectBookSystemAgentText(await fs.readFile(inspection.absolutePath, "utf8"), book.title);
+    if (systemRulesIssue === "modified") {
+      diagnostics.push(
+        diagnostic(
+          workspaceRoot,
+          "warning",
+          "manuscript.book.agent.system.modified",
+          `书籍系统 AI 指南 "${agentPath}" 不是当前插件版本。`,
+          agentPath
+        )
+      );
+    }
+  } catch (error) {
+    if (isNotFound(error)) {
+      diagnostics.push(
+        diagnostic(
+          workspaceRoot,
+          "warning",
+          "manuscript.book.agent.system.missing",
+          `书籍系统 AI 指南 "${agentPath}" 缺失。`,
+          agentPath
+        )
+      );
+      return;
+    }
+    throw error;
+  }
+}
+
+async function validateBookUserAgentFile(
+  workspaceRoot: string,
+  diagnostics: DiagnosticItem[]
+): Promise<void> {
+  const agentPath = bookAgentPath();
+  const inspection = await inspectExistingWorkspacePath(workspaceRoot, agentPath);
+  if (inspection.status === "missing") {
+    diagnostics.push(
+      diagnostic(
+        workspaceRoot,
+        "warning",
+        "manuscript.book.agent.user.missing",
+        `书籍用户 AI 指南 "${agentPath}" 缺失。`,
+        agentPath
+      )
+    );
+    return;
+  }
+
+  if (inspection.status === "unsafe") {
+    diagnostics.push(
+      diagnostic(
+        workspaceRoot,
+        "warning",
+        "manuscript.book.agent.user.unsafePath",
+        `书籍用户 AI 指南 "${agentPath}" 解析到了工作区之外，或经过了不安全的符号链接。`,
+        agentPath
+      )
+    );
+    return;
+  }
+
+  try {
+    const stats = await fs.stat(inspection.absolutePath);
+    if (!stats.isFile()) {
+      diagnostics.push(
+        diagnostic(
+          workspaceRoot,
+          "warning",
+          "manuscript.book.agent.user.notFile",
+          `书籍用户 AI 指南 "${agentPath}" 不是文件。`,
+          agentPath
+        )
+      );
+    }
+  } catch (error) {
+    if (isNotFound(error)) {
+      diagnostics.push(
+        diagnostic(
+          workspaceRoot,
+          "warning",
+          "manuscript.book.agent.user.missing",
+          `书籍用户 AI 指南 "${agentPath}" 缺失。`,
+          agentPath
+        )
+      );
+      return;
+    }
+    throw error;
+  }
+}
+
 type ExistingPathInspection =
   | { status: "safe"; absolutePath: string }
   | { status: "missing"; absolutePath: string }
@@ -522,18 +580,12 @@ function parseBook(value: unknown, pathLabel: string, add: AddDiagnostic): Manus
 
   const id = parseNonEmptyString<BookId>(value.id, `${pathLabel}.id`, add);
   const title = parseTitle(value.title, `${pathLabel}.title`, add);
-  const pathValue = parseNonEmptyString<string>(value.path, `${pathLabel}.path`, add);
-  const volumeIds = parseIdArray<VolumeId>(value.volumeIds, `${pathLabel}.volumeIds`, add);
 
-  if (!isPositiveInteger(value.nextVolumeNumber)) {
-    add("error", "manuscript.book.nextVolumeNumber.invalid", `${pathLabel}.nextVolumeNumber 必须是正整数。`);
-  }
-
-  if (!id || !title || !pathValue || !isPositiveInteger(value.nextVolumeNumber)) {
+  if (!id || !title) {
     return undefined;
   }
 
-  return { id, title, path: normalizeRelativePath(pathValue), volumeIds, nextVolumeNumber: value.nextVolumeNumber };
+  return { id, title };
 }
 
 function parseVolume(value: unknown, pathLabel: string, add: AddDiagnostic): ManuscriptVolume | undefined {
@@ -543,7 +595,6 @@ function parseVolume(value: unknown, pathLabel: string, add: AddDiagnostic): Man
   }
 
   const id = parseNonEmptyString<VolumeId>(value.id, `${pathLabel}.id`, add);
-  const bookId = parseNonEmptyString<BookId>(value.bookId, `${pathLabel}.bookId`, add);
   const title = parseTitle(value.title, `${pathLabel}.title`, add);
   const pathValue = parseNonEmptyString<string>(value.path, `${pathLabel}.path`, add);
   const chapterIds = parseIdArray<ChapterId>(value.chapterIds, `${pathLabel}.chapterIds`, add);
@@ -552,13 +603,12 @@ function parseVolume(value: unknown, pathLabel: string, add: AddDiagnostic): Man
     add("error", "manuscript.volume.nextChapterNumber.invalid", `${pathLabel}.nextChapterNumber 必须是正整数。`);
   }
 
-  if (!id || !bookId || !title || !pathValue || !isPositiveInteger(value.nextChapterNumber)) {
+  if (!id || !title || !pathValue || !isPositiveInteger(value.nextChapterNumber)) {
     return undefined;
   }
 
   return {
     id,
-    bookId,
     title,
     path: normalizeRelativePath(pathValue),
     chapterIds,
@@ -651,8 +701,6 @@ function parseTrashItem(value: unknown, pathLabel: string, add: AddDiagnostic): 
   const title = parseTitle(value.title, `${pathLabel}.title`, add);
   const originalPath = parseNonEmptyString<string>(value.originalPath, `${pathLabel}.originalPath`, add);
   const trashPath = parseNonEmptyString<string>(value.trashPath, `${pathLabel}.trashPath`, add);
-  const bookIds = parseIdArray<BookId>(value.bookIds, `${pathLabel}.bookIds`, add);
-  const books = parseRecord<ManuscriptBook>(value.books, `${pathLabel}.books`, parseBook, add);
   const volumes = parseRecord<ManuscriptVolume>(value.volumes, `${pathLabel}.volumes`, parseVolume, add);
   const chapters = parseRecord<ManuscriptChapter>(value.chapters, `${pathLabel}.chapters`, parseChapter, add);
 
@@ -678,19 +726,17 @@ function parseTrashItem(value: unknown, pathLabel: string, add: AddDiagnostic): 
     deletedAt: value.deletedAt as string,
     originalPath: normalizeRelativePath(originalPath),
     trashPath: normalizeRelativePath(trashPath),
-    bookIds,
-    books,
     volumes,
     chapters
   };
 }
 
 function parseTrashKind(value: unknown, label: string, add: AddDiagnostic): ManuscriptTrashKind | undefined {
-  if (value === "book" || value === "volume" || value === "chapter") {
+  if (value === "volume" || value === "chapter") {
     return value;
   }
 
-  add("error", "manuscript.trash.item.kind.invalid", `${label} 必须是 book、volume 或 chapter。`);
+  add("error", "manuscript.trash.item.kind.invalid", `${label} 必须是 volume 或 chapter。`);
   return undefined;
 }
 

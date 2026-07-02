@@ -3,7 +3,7 @@ import type { OperationPlan } from "../../kernel/types";
 
 export const MANUSCRIPT_CAPABILITY_ID = "manuscript.core";
 export const MANUSCRIPT_SCHEMA_ID = "manuscript.manifest";
-export const MANUSCRIPT_SCHEMA_VERSION = "0.1.0";
+export const MANUSCRIPT_SCHEMA_VERSION = "0.2.0";
 export const MANUSCRIPT_DIR = "manuscript";
 export const MANUSCRIPT_MANIFEST_PATH = "manuscript/manifest.json";
 export const MANUSCRIPT_NOTES_PATH = "manuscript/notes.md";
@@ -15,7 +15,7 @@ export type TrashItemId = string & { readonly __brand: "TrashItemId" };
 
 export type ManuscriptStatus = "idea" | "outline" | "draft" | "revise" | "done" | "archived";
 export type ManuscriptChangeType = "structure" | "status" | "metadata" | "content";
-export type ManuscriptTrashKind = "book" | "volume" | "chapter";
+export type ManuscriptTrashKind = "volume" | "chapter";
 
 export const MANUSCRIPT_STATUSES: ManuscriptStatus[] = [
   "idea",
@@ -28,11 +28,10 @@ export const MANUSCRIPT_STATUSES: ManuscriptStatus[] = [
 
 export interface ManuscriptManifest {
   schemaVersion: string;
-  bookIds: BookId[];
-  books: Record<string, ManuscriptBook>;
+  book: ManuscriptBook;
+  volumeIds: VolumeId[];
   volumes: Record<string, ManuscriptVolume>;
   chapters: Record<string, ManuscriptChapter>;
-  nextBookNumber: number;
   createdAt: string;
   updatedAt: string;
   trash: ManuscriptTrash;
@@ -41,14 +40,10 @@ export interface ManuscriptManifest {
 export interface ManuscriptBook {
   id: BookId;
   title: string;
-  path: string;
-  volumeIds: VolumeId[];
-  nextVolumeNumber: number;
 }
 
 export interface ManuscriptVolume {
   id: VolumeId;
-  bookId: BookId;
   title: string;
   path: string;
   chapterIds: ChapterId[];
@@ -78,8 +73,6 @@ export interface ManuscriptTrashItem {
   deletedAt: string;
   originalPath: string;
   trashPath: string;
-  bookIds: BookId[];
-  books: Record<string, ManuscriptBook>;
   volumes: Record<string, ManuscriptVolume>;
   chapters: Record<string, ManuscriptChapter>;
 }
@@ -87,14 +80,10 @@ export interface ManuscriptTrashItem {
 export interface ManuscriptBookDto {
   id: BookId;
   title: string;
-  path: string;
-  volumeIds: VolumeId[];
-  index: number;
 }
 
 export interface ManuscriptVolumeDto {
   id: VolumeId;
-  bookId: BookId;
   title: string;
   path: string;
   chapterIds: ChapterId[];
@@ -142,8 +131,8 @@ export interface ManuscriptActionResult {
 }
 
 export interface ManuscriptReader {
-  listBooks(): Promise<ManuscriptBookDto[]>;
-  listVolumes(bookId?: BookId): Promise<ManuscriptVolumeDto[]>;
+  getBook(): Promise<ManuscriptBookDto>;
+  listVolumes(): Promise<ManuscriptVolumeDto[]>;
   listChapters(volumeId?: VolumeId): Promise<ManuscriptChapterDto[]>;
   listTrashItems(): Promise<ManuscriptTrashItemDto[]>;
   getChapter(chapterId: ChapterId): Promise<ManuscriptChapterDto | undefined>;
@@ -152,14 +141,13 @@ export interface ManuscriptReader {
 }
 
 export interface ManuscriptActions {
-  createBook(title: string): Promise<ManuscriptActionResult>;
-  createVolume(bookId: BookId, title: string): Promise<ManuscriptActionResult>;
+  refreshBookAgentGuide(): Promise<ManuscriptActionResult>;
+  createVolume(title: string): Promise<ManuscriptActionResult>;
   createChapter(volumeId: VolumeId, title: string): Promise<ManuscriptActionResult>;
-  renameBook(bookId: BookId, title: string): Promise<ManuscriptActionResult>;
+  renameBook(title: string): Promise<ManuscriptActionResult>;
   renameVolume(volumeId: VolumeId, title: string): Promise<ManuscriptActionResult>;
   renameChapter(chapterId: ChapterId, title: string): Promise<ManuscriptActionResult>;
   moveChapter(chapterId: ChapterId, targetVolumeId: VolumeId, targetIndex?: number): Promise<ManuscriptActionResult>;
-  deleteBook(bookId: BookId): Promise<ManuscriptActionResult>;
   deleteVolume(volumeId: VolumeId): Promise<ManuscriptActionResult>;
   deleteChapter(chapterId: ChapterId): Promise<ManuscriptActionResult>;
   restoreTrashItem(trashItemId: TrashItemId): Promise<ManuscriptActionResult>;

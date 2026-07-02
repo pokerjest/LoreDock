@@ -30,11 +30,36 @@ interface SaveCardPayload {
   chapterRefs: string[];
 }
 
+interface GalleryPanelState {
+  panel: vscode.WebviewPanel;
+  refresh(selectedCardId?: StoryBibleCardId): Promise<void>;
+  changeDisposable: vscode.Disposable;
+}
+
+const galleryPanels = new Map<string, GalleryPanelState>();
+
+export function closeStoryBibleGallery(workspaceRoot: string): void {
+  const existing = galleryPanels.get(workspaceRoot);
+  if (!existing) {
+    return;
+  }
+
+  existing.panel.dispose();
+}
+
 export function openStoryBibleGallery(
   context: KernelContext,
   controller: StoryBibleController,
   initialCardId?: StoryBibleCardId
 ): void {
+  const panelKey = context.workspaceFolder.uri.fsPath;
+  const existing = galleryPanels.get(panelKey);
+  if (existing) {
+    existing.panel.reveal(vscode.ViewColumn.One);
+    void existing.refresh(initialCardId);
+    return;
+  }
+
   const panel = vscode.window.createWebviewPanel(
     "loredock.storyBible.gallery",
     "故事圣经条目库",
@@ -63,7 +88,11 @@ export function openStoryBibleGallery(
   const changeDisposable = controller.onDidChange(() => {
     void refresh();
   });
-  panel.onDidDispose(() => changeDisposable.dispose());
+  galleryPanels.set(panelKey, { panel, refresh, changeDisposable });
+  panel.onDidDispose(() => {
+    changeDisposable.dispose();
+    galleryPanels.delete(panelKey);
+  });
 
   panel.webview.onDidReceiveMessage(async (message: GalleryMessage) => {
     if (message.type === "ready") {
@@ -1024,11 +1053,14 @@ export function buildStoryBibleGalleryHtml(webview: vscode.Webview, nonce: strin
           ? typeLabel(activeCategory)
           : "全部条目";
       els.heroMeta.innerHTML = [
-        "人物 " + (counts.character ?? 0),
-        "地点 " + (counts.location ?? 0),
-        "规则 " + (counts.rule ?? 0),
-        "关键词 " + state.keywords.length
-      ].map((item) => '<span class="chip">' + escapeHtml(item) + '</span>').join('');
+        ["人物", counts.character ?? 0],
+        ["地点", counts.location ?? 0],
+        ["规则", counts.rule ?? 0],
+        ["关键词", state.keywords.length]
+      ]
+        .filter(([, count]) => count > 0)
+        .map(([label, count]) => '<span class="chip">' + escapeHtml(label + " " + count) + '</span>')
+        .join('');
 
       els.sections.innerHTML = sectionHtml(cards);
       els.empty.hidden = cards.length > 0;
@@ -1039,12 +1071,18 @@ export function buildStoryBibleGalleryHtml(webview: vscode.Webview, nonce: strin
 
     function renderNavigation() {
       const counts = countByType(state.cards);
+      if (activeCategory && (counts[activeCategory] ?? 0) === 0) {
+        activeCategory = "";
+      }
+      if (activeKeyword && !state.keywords.some((keyword) => keyword.slug === activeKeyword && keyword.usageCount > 0)) {
+        activeKeyword = "";
+      }
       const categories = [
         ["", "全部条目", state.cards.length],
         ["character", "人物", counts.character ?? 0],
         ["location", "地点", counts.location ?? 0],
         ["rule", "规则", counts.rule ?? 0]
-      ];
+      ].filter(([type, , count]) => type === "" || count > 0);
       els.categoryNav.innerHTML = categories.map(([type, label, count]) =>
         '<button class="nav-item ' + (activeCategory === type && !activeKeyword ? 'active' : '') + '" type="button" data-category="' + escapeHtml(type) + '">' +
           '<span>' + escapeHtml(label) + '</span><span class="nav-count">' + count + '</span>' +

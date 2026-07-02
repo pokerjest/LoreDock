@@ -157,6 +157,7 @@ export interface StoryBibleActions {
   ): Promise<StoryBibleActionResult>;
   renameCard(cardId: StoryBibleCardId, name: string): Promise<StoryBibleActionResult>;
   updateCardMetadata(cardId: StoryBibleCardId, patch: StoryBibleCardMetadataPatch): Promise<StoryBibleActionResult>;
+  repairCardPrimaryKeyword(cardId: StoryBibleCardId): Promise<StoryBibleActionResult>;
   deleteCard(cardId: StoryBibleCardId): Promise<StoryBibleActionResult>;
   defineKeyword(input: StoryBibleKeywordInput): Promise<StoryBibleActionResult>;
   updateKeywordDefinition(slug: KeywordSlug | string, patch: Partial<StoryBibleKeywordInput>): Promise<StoryBibleActionResult>;
