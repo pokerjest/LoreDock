@@ -297,6 +297,38 @@ export class StoryBibleController implements StoryBibleReader, StoryBibleActions
     }, [{ type: "metadata", cardId, path: card.dto.path }]);
   }
 
+  public async repairCardPrimaryKeyword(cardId: StoryBibleCardId): Promise<StoryBibleActionResult> {
+    const catalog = await this.readCatalog();
+    const card = requireParsedCard(catalog.cards, cardId);
+    const primaryKeyword = resolvePrimaryKeywordForName(
+      catalog.keywords.map((keyword) => keyword.slug as string),
+      card.dto,
+      card.dto.name
+    );
+    const nextTags = dedupeKeywords([
+      primaryKeyword,
+      ...card.dto.tags.filter((tag) => tag !== primaryKeyword)
+    ]);
+
+    if (arraysEqual(nextTags, card.dto.tags)) {
+      return {
+        applied: true,
+        plan: storyBiblePlan(`条目“${card.dto.name}”主关键词已正确。`)
+      };
+    }
+
+    const next = {
+      ...card.dto,
+      tags: nextTags,
+      updatedAt: this.timestamp()
+    };
+    const plan = storyBiblePlan(`修复条目“${card.dto.name}”主关键词。`, [], [], [card.dto.path]);
+
+    return this.applyPlan(plan, async (writer) => {
+      await writer.writeFile(card.dto.path, stringifyCardMarkdown(next, card.body, card.frontmatter));
+    }, [{ type: "metadata", cardId, path: card.dto.path }]);
+  }
+
   public async deleteCard(cardId: StoryBibleCardId): Promise<StoryBibleActionResult> {
     const catalog = await this.readCatalog();
     const card = requireParsedCard(catalog.cards, cardId);
@@ -403,9 +435,15 @@ export class StoryBibleController implements StoryBibleReader, StoryBibleActions
   public async deleteKeywordDefinition(slug: KeywordSlug | string): Promise<StoryBibleActionResult> {
     const normalized = validateOrdinaryKeywordSlug(slug);
     const keywordPath = keywordDefinitionPath(normalized);
-    const existing = await readExistingKeywordDefinition(this.workspaceRoot, keywordPath);
+    const catalog = await this.readCatalog();
+    const existing = catalog.keywordDefinitions.find((item) => item.dto.slug === normalized);
     if (!existing) {
       throw new Error(`未找到关键词定义 "${slug}"。`);
+    }
+    const affectedCards = catalog.cards.filter((card) => card.dto.tags.includes(normalized));
+    const blockedCards = affectedCards.filter((card) => card.dto.primaryKeyword === normalized);
+    if (blockedCards.length > 0) {
+      throw new Error("不能删除对象主关键词。请先重命名或修复对应故事圣经条目。");
     }
 
     const trashItemId = createStoryBibleTrashItemId();
@@ -428,19 +466,41 @@ export class StoryBibleController implements StoryBibleReader, StoryBibleActions
     }
 
     const plan = storyBiblePlan(
-      `将关键词定义“${existing.dto.label}”移入故事圣经资源垃圾桶。`,
+      affectedCards.length > 0
+        ? `删除关键词“${existing.dto.label}”，并从 ${affectedCards.length} 个条目中移除。`
+        : `将关键词定义“${existing.dto.label}”移入故事圣经资源垃圾桶。`,
       trashDirectoriesFor(trashPath),
-      [metadataPath]
+      [metadataPath],
+      affectedCards.map((card) => card.dto.path)
     );
     plan.filesToMove = [fileMove];
 
-    return this.applyPlan(plan, async (writer) => {
-      for (const dir of trashDirectoriesFor(trashPath)) {
-        await writer.ensureDirectory(dir);
-      }
-      await writer.writeFile(metadataPath, stringifyTrashMetadata(metadata));
-      await writer.moveFile(fileMove.from, fileMove.to);
-    }, [{ type: "structure", keywordSlug: normalized, trashItemId, path: keywordPath }]);
+    return this.applyPlan(
+      plan,
+      async (writer) => {
+        for (const dir of trashDirectoriesFor(trashPath)) {
+          await writer.ensureDirectory(dir);
+        }
+        await writer.writeFile(metadataPath, stringifyTrashMetadata(metadata));
+        const timestamp = this.timestamp();
+        for (const card of affectedCards) {
+          const next = {
+            ...card.dto,
+            tags: card.dto.tags.filter((tag) => tag !== normalized),
+            updatedAt: timestamp
+          };
+          await writer.writeFile(card.dto.path, stringifyCardMarkdown(next, card.body, card.frontmatter));
+        }
+        await writer.moveFile(fileMove.from, fileMove.to);
+      },
+      [
+        { type: "structure", keywordSlug: normalized, trashItemId, path: keywordPath },
+        ...affectedCards.map((card) => ({ type: "metadata" as const, cardId: card.dto.id, path: card.dto.path }))
+      ],
+      affectedCards.length > 0
+        ? `关键词“${existing.dto.label}”正在被 ${affectedCards.length} 个条目使用。删除会同时从这些条目移除该 tag，并把定义文件移入资源回收站。确认删除？`
+        : undefined
+    );
   }
 
   public async restoreTrashItem(trashItemId: StoryBibleTrashItemId): Promise<StoryBibleActionResult> {
@@ -586,6 +646,10 @@ function filterKeywords(keywords: KeywordCatalogEntryDto[], query: StoryBibleKey
     return [keyword.slug, keyword.label, keyword.description, keyword.category]
       .some((field) => field.toLowerCase().includes(text));
   });
+}
+
+function arraysEqual<T>(left: readonly T[], right: readonly T[]): boolean {
+  return left.length === right.length && left.every((item, index) => item === right[index]);
 }
 
 function requireParsedCard(cards: ParsedStoryBibleCard[], cardId: StoryBibleCardId): ParsedStoryBibleCard {

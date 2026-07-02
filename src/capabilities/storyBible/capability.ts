@@ -14,7 +14,7 @@ import {
   readStoryBible,
   resolveExistingSafeStoryBiblePath
 } from "./files";
-import { openStoryBibleGallery } from "./galleryWebview";
+import { closeStoryBibleGallery, openStoryBibleGallery } from "./galleryWebview";
 import { StoryBibleTreeProvider, type StoryBibleTreeNode } from "./tree";
 import {
   LORE_DIR,
@@ -49,6 +49,7 @@ const STORY_BIBLE_DISABLED_COMMANDS = [
   "loredock.storyBible.openCard",
   "loredock.storyBible.renameCard",
   "loredock.storyBible.editCardMetadata",
+  "loredock.storyBible.repairCardPrimaryKeyword",
   "loredock.storyBible.deleteCard",
   "loredock.storyBible.searchCards",
   "loredock.storyBible.createCardFromSelection",
@@ -132,6 +133,9 @@ export const storyBibleCapability: Capability = {
       context.registerCommand("loredock.storyBible.openCard", (node) => openCard(context, controller, node)),
       context.registerCommand("loredock.storyBible.renameCard", (node) => renameCard(controller, node)),
       context.registerCommand("loredock.storyBible.editCardMetadata", (node) => editCardMetadata(controller, node)),
+      context.registerCommand("loredock.storyBible.repairCardPrimaryKeyword", (node) =>
+        repairCardPrimaryKeyword(controller, node)
+      ),
       context.registerCommand("loredock.storyBible.deleteCard", (node) => deleteCard(controller, node)),
       context.registerCommand("loredock.storyBible.searchCards", () => searchCards(context, controller)),
       context.registerCommand("loredock.storyBible.createCardFromSelection", () => createCardFromSelection(controller)),
@@ -149,7 +153,12 @@ export const storyBibleCapability: Capability = {
       context.registerCommand("loredock.storyBible.restoreTrashItem", (node) => restoreTrashItem(controller, node)),
       context.registerCommand("loredock.storyBible.permanentlyDeleteTrashItem", (node) =>
         permanentlyDeleteTrashItem(controller, node)
-      )
+      ),
+      {
+        dispose() {
+          closeStoryBibleGallery(context.workspaceFolder.uri.fsPath);
+        }
+      }
     ];
 
     void controller.refreshDiagnostics().then(() => refreshStoryBibleTree(tree));
@@ -472,6 +481,13 @@ async function deleteCard(controller: StoryBibleController, node: unknown): Prom
   const cardId = isCardNode(node) ? node.id : await pickCard(controller);
   if (cardId) {
     await controller.deleteCard(cardId);
+  }
+}
+
+async function repairCardPrimaryKeyword(controller: StoryBibleController, node: unknown): Promise<void> {
+  const cardId = isCardNode(node) ? node.id : await pickCard(controller);
+  if (cardId) {
+    await controller.repairCardPrimaryKeyword(cardId);
   }
 }
 

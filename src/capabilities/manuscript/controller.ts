@@ -1,11 +1,18 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as vscode from "vscode";
-import { LOREDOCK_DIR, type DiagnosticItem, type OperationPlan } from "../../kernel/types";
+import { LOREDOCK_DIR, MANIFEST_RELATIVE_PATH, type DiagnosticItem, type OperationPlan } from "../../kernel/types";
 import { SafeFileWriter } from "../../kernel/safeFileWriter";
 import { normalizeRelativePath } from "../../kernel/operationPlan";
-import { bookAgentPath, createBookAgentText } from "./bookAgent";
-import { createBookId, createChapterId, createTrashItemId, createVolumeId, formatNumberedName } from "./ids";
+import { inspectExistingWorkspacePath } from "../../kernel/safeWorkspacePath";
+import {
+  bookAgentPath,
+  bookSystemAgentPath,
+  createBookAgentText,
+  createBookSystemAgentText,
+  isCombinedBookAgentText
+} from "./bookAgent";
+import { createChapterId, createTrashItemId, createVolumeId, formatNumberedName } from "./ids";
 import {
   assertNonEmptyTitle,
   assertTargetWordCount,
@@ -19,12 +26,11 @@ import {
 import { countMarkdownWords } from "./wordCount";
 import {
   MANUSCRIPT_STATUSES,
+  MANUSCRIPT_DIR,
   MANUSCRIPT_MANIFEST_PATH,
-  type BookId,
   type ChapterId,
   type ManuscriptActionResult,
   type ManuscriptActions,
-  type ManuscriptBook,
   type ManuscriptBookDto,
   type ManuscriptChangeEvent,
   type ManuscriptChangeType,
@@ -56,6 +62,18 @@ interface ManuscriptControllerOptions {
   now(): Date;
 }
 
+export interface BookAgentGuideSyncResult {
+  filesCreated: string[];
+  filesModified: string[];
+  filesSkipped: string[];
+}
+
+type BookAgentGuideWrite = {
+  path: string;
+  content: string;
+  kind: "create" | "modify";
+};
+
 export class ManuscriptController implements ManuscriptReader, ManuscriptActions, ManuscriptService {
   public readonly reader: ManuscriptReader = this;
   public readonly actions: ManuscriptActions = this;
@@ -85,32 +103,21 @@ export class ManuscriptController implements ManuscriptReader, ManuscriptActions
     this.emit(relativePath === MANUSCRIPT_MANIFEST_PATH ? "metadata" : "content", { path: relativePath });
   }
 
-  public async listBooks(): Promise<ManuscriptBookDto[]> {
+  public async getBook(): Promise<ManuscriptBookDto> {
     const manifest = await this.loadManifest();
-    return manifest.bookIds
-      .map((id, index) => ({ book: manifest.books[id], index }))
-      .filter((entry): entry is { book: NonNullable<(typeof entry)["book"]>; index: number } => Boolean(entry.book))
-      .map(({ book, index }) => ({
-        id: book.id,
-        title: book.title,
-        path: book.path,
-        volumeIds: [...book.volumeIds],
-        index
-      }));
+    return {
+      id: manifest.book.id,
+      title: manifest.book.title
+    };
   }
 
-  public async listVolumes(bookId?: BookId): Promise<ManuscriptVolumeDto[]> {
+  public async listVolumes(): Promise<ManuscriptVolumeDto[]> {
     const manifest = await this.loadManifest();
-    const ids = bookId
-      ? manifest.books[bookId]?.volumeIds ?? []
-      : manifest.bookIds.flatMap((id) => manifest.books[id]?.volumeIds ?? []);
-
-    return ids
+    return manifest.volumeIds
       .map((id, index) => ({ volume: manifest.volumes[id], index }))
       .filter((entry): entry is { volume: NonNullable<(typeof entry)["volume"]>; index: number } => Boolean(entry.volume))
       .map(({ volume, index }) => ({
         id: volume.id,
-        bookId: volume.bookId,
         title: volume.title,
         path: volume.path,
         chapterIds: [...volume.chapterIds],
@@ -122,9 +129,7 @@ export class ManuscriptController implements ManuscriptReader, ManuscriptActions
     const manifest = await this.loadManifest();
     const ids = volumeId
       ? manifest.volumes[volumeId]?.chapterIds ?? []
-      : manifest.bookIds.flatMap((bookId) =>
-          (manifest.books[bookId]?.volumeIds ?? []).flatMap((id) => manifest.volumes[id]?.chapterIds ?? [])
-        );
+      : manifest.volumeIds.flatMap((id) => manifest.volumes[id]?.chapterIds ?? []);
 
     return ids
       .map((id, index) => ({ chapter: manifest.chapters[id], index }))
@@ -196,50 +201,181 @@ export class ManuscriptController implements ManuscriptReader, ManuscriptActions
     }
   }
 
-  public async createBook(title: string): Promise<ManuscriptActionResult> {
+  public async refreshBookAgentGuide(): Promise<ManuscriptActionResult> {
     const manifest = await this.loadManifest();
-    const next = cloneManifest(manifest);
-    const cleanTitle = assertNonEmptyTitle(title);
-    const number = next.nextBookNumber;
-    const bookId = createBookId();
-    const bookPath = `manuscript/${formatNumberedName("book", number)}`;
-    const timestamp = this.timestamp();
+    const { writes } = await this.collectBookAgentGuideWrites(manifest);
+    const filesCreated = writes.filter((write) => write.kind === "create").map((write) => write.path);
+    const filesModified = writes.filter((write) => write.kind === "modify").map((write) => write.path);
 
-    next.nextBookNumber = number + 1;
-    next.bookIds.push(bookId);
-    next.books[bookId] = {
-      id: bookId,
-      title: cleanTitle,
-      path: bookPath,
-      volumeIds: [],
-      nextVolumeNumber: 1
+    if (writes.length === 0) {
+      return { applied: true, plan: noOpPlan(`书籍“${manifest.book.title}”AI 指南已是最新。`) };
+    }
+
+    const plan: OperationPlan = {
+      summary: `刷新书籍“${manifest.book.title}”AI 指南。`,
+      directoriesToCreate: [],
+      filesToCreate: filesCreated,
+      filesToModify: filesModified
     };
-    next.updatedAt = timestamp;
 
-    const agentPath = bookAgentPath(bookPath);
-    const plan = manifestPlan(`新建书籍“${cleanTitle}”。`, [bookPath], [agentPath]);
-    return this.applyManifestPlan(plan, next, async (writer) => {
-      await writer.ensureDirectory(bookPath);
-      await writer.writeFile(agentPath, createBookAgentText(cleanTitle, bookPath));
-      await writer.writeFile(MANUSCRIPT_MANIFEST_PATH, stringifyManuscriptManifest(next));
-    }, [{ type: "structure", bookId }]);
+    return this.applyManifestPlan(plan, manifest, async (writer) => {
+      for (const write of writes) {
+        await writer.writeFile(write.path, write.content);
+      }
+    }, writes.map((write) => ({ type: "metadata", bookId: manifest.book.id, path: write.path })));
   }
 
-  public async createVolume(bookId: BookId, title: string): Promise<ManuscriptActionResult> {
+  public async syncBookAgentGuides(): Promise<BookAgentGuideSyncResult> {
+    const manifest = await this.loadManifest();
+    const { writes, filesSkipped } = await this.collectBookAgentGuideWrites(manifest);
+
+    const filesCreated = writes.filter((write) => write.kind === "create").map((write) => write.path);
+    const filesModified = writes.filter((write) => write.kind === "modify").map((write) => write.path);
+
+    if (writes.length === 0) {
+      return { filesCreated, filesModified, filesSkipped };
+    }
+
+    const plan: OperationPlan = {
+      summary: "同步书籍 AI 指南系统规则。",
+      directoriesToCreate: [],
+      filesToCreate: filesCreated,
+      filesToModify: filesModified
+    };
+    const writer = new SafeFileWriter(this.workspaceRoot, plan);
+    for (const write of writes) {
+      await writer.writeFile(write.path, write.content);
+    }
+    for (const write of writes) {
+      this.emit("metadata", { bookId: manifest.book.id, path: write.path });
+    }
+
+    return { filesCreated, filesModified, filesSkipped };
+  }
+
+  public async syncBookTitleWithWorkspaceFolder(): Promise<boolean> {
+    const folderTitle = path.basename(this.workspaceRoot);
+    if (folderTitle.trim() === "") {
+      return false;
+    }
+
+    const manifest = await this.loadManifest();
+    if (manifest.book.title === folderTitle) {
+      return false;
+    }
+
+    const next = cloneManifest(manifest);
+    const timestamp = this.timestamp();
+    next.book.title = folderTitle;
+    next.updatedAt = timestamp;
+    const projectManifestText = await this.createProjectTitleUpdate(folderTitle, timestamp);
+    const plan = manifestPlan(`同步书名为文件夹名“${folderTitle}”。`);
+    if (projectManifestText) {
+      plan.filesToModify.push(MANIFEST_RELATIVE_PATH);
+    }
+
+    const writer = new SafeFileWriter(this.workspaceRoot, plan);
+    await writer.writeFile(MANUSCRIPT_MANIFEST_PATH, stringifyManuscriptManifest(next));
+    if (projectManifestText) {
+      await writer.writeFile(MANIFEST_RELATIVE_PATH, projectManifestText);
+    }
+    this.emit("metadata", { bookId: next.book.id });
+    await this.refreshDiagnostics();
+    return true;
+  }
+
+  private async collectBookAgentGuideWrites(
+    manifest: ManuscriptManifest
+  ): Promise<{ writes: BookAgentGuideWrite[]; filesSkipped: string[] }> {
+    const writes: BookAgentGuideWrite[] = [];
+    const filesSkipped: string[] = [];
+
+    await this.collectSystemAgentWrite(manifest.book.title, writes, filesSkipped);
+    await this.collectUserAgentWrite(manifest.book.title, writes, filesSkipped);
+
+    return { writes, filesSkipped };
+  }
+
+  private async collectSystemAgentWrite(
+    bookTitle: string,
+    writes: BookAgentGuideWrite[],
+    filesSkipped: string[]
+  ): Promise<void> {
+    const agentPath = bookSystemAgentPath();
+    const nextText = createBookSystemAgentText(bookTitle);
+    const existingText = await this.readSafeAgentFile(agentPath, filesSkipped);
+
+    if (existingText === undefined) {
+      if (!filesSkipped.includes(agentPath)) {
+        writes.push({ path: agentPath, content: nextText, kind: "create" });
+      }
+      return;
+    }
+
+    if (existingText !== nextText) {
+      writes.push({ path: agentPath, content: nextText, kind: "modify" });
+    }
+  }
+
+  private async collectUserAgentWrite(
+    bookTitle: string,
+    writes: BookAgentGuideWrite[],
+    filesSkipped: string[]
+  ): Promise<void> {
+    const agentPath = bookAgentPath();
+    const existingText = await this.readSafeAgentFile(agentPath, filesSkipped);
+
+    if (existingText === undefined) {
+      if (!filesSkipped.includes(agentPath)) {
+        writes.push({ path: agentPath, content: createBookAgentText(bookTitle), kind: "create" });
+      }
+      return;
+    }
+
+    if (isCombinedBookAgentText(existingText)) {
+      const nextText = createBookAgentText(bookTitle, existingText);
+      if (nextText !== existingText) {
+        writes.push({ path: agentPath, content: nextText, kind: "modify" });
+      }
+    }
+  }
+
+  private async readSafeAgentFile(relativePath: string, filesSkipped: string[]): Promise<string | undefined> {
+    if (!isSafeBookAgentRelativePath(relativePath)) {
+      filesSkipped.push(relativePath);
+      return undefined;
+    }
+
+    const inspection = await inspectExistingWorkspacePath(this.workspaceRoot, relativePath);
+    if (inspection.status === "unsafe") {
+      filesSkipped.push(relativePath);
+      return undefined;
+    }
+
+    if (inspection.status === "missing") {
+      return undefined;
+    }
+
+    const stats = await fs.stat(inspection.absolutePath);
+    if (!stats.isFile()) {
+      filesSkipped.push(relativePath);
+      return undefined;
+    }
+
+    return fs.readFile(inspection.absolutePath, "utf8");
+  }
+
+  public async createVolume(title: string): Promise<ManuscriptActionResult> {
     const manifest = await this.loadManifest();
     const next = cloneManifest(manifest);
-    const book = requireBook(next, bookId);
     const cleanTitle = assertNonEmptyTitle(title);
-    const number = book.nextVolumeNumber;
     const volumeId = createVolumeId();
-    const volumePath = `${book.path}/${formatNumberedName("volume", number)}`;
+    const volumePath = await this.allocateVolumePath(next);
     const timestamp = this.timestamp();
 
-    book.nextVolumeNumber = number + 1;
-    book.volumeIds.push(volumeId);
+    next.volumeIds.push(volumeId);
     next.volumes[volumeId] = {
       id: volumeId,
-      bookId,
       title: cleanTitle,
       path: volumePath,
       chapterIds: [],
@@ -251,7 +387,7 @@ export class ManuscriptController implements ManuscriptReader, ManuscriptActions
     return this.applyManifestPlan(plan, next, async (writer) => {
       await writer.ensureDirectory(volumePath);
       await writer.writeFile(MANUSCRIPT_MANIFEST_PATH, stringifyManuscriptManifest(next));
-    }, [{ type: "structure", bookId, volumeId }]);
+    }, [{ type: "structure", bookId: next.book.id, volumeId }]);
   }
 
   public async createChapter(volumeId: VolumeId, title: string): Promise<ManuscriptActionResult> {
@@ -292,13 +428,24 @@ export class ManuscriptController implements ManuscriptReader, ManuscriptActions
     ]);
   }
 
-  public async renameBook(bookId: BookId, title: string): Promise<ManuscriptActionResult> {
+  public async renameBook(title: string): Promise<ManuscriptActionResult> {
     const manifest = await this.loadManifest();
     const next = cloneManifest(manifest);
-    const book = requireBook(next, bookId);
-    book.title = assertNonEmptyTitle(title);
-    next.updatedAt = this.timestamp();
-    return this.writeManifestOnly(`重命名书籍为“${book.title}”。`, next, [{ type: "metadata", bookId }]);
+    const timestamp = this.timestamp();
+    next.book.title = assertNonEmptyTitle(title);
+    next.updatedAt = timestamp;
+    const projectManifestText = await this.createProjectTitleUpdate(next.book.title, timestamp);
+    const plan = manifestPlan(`重命名书籍为“${next.book.title}”。`);
+    if (projectManifestText) {
+      plan.filesToModify.push(MANIFEST_RELATIVE_PATH);
+    }
+
+    return this.applyManifestPlan(plan, next, async (writer) => {
+      await writer.writeFile(MANUSCRIPT_MANIFEST_PATH, stringifyManuscriptManifest(next));
+      if (projectManifestText) {
+        await writer.writeFile(MANIFEST_RELATIVE_PATH, projectManifestText);
+      }
+    }, [{ type: "metadata", bookId: next.book.id }]);
   }
 
   public async renameVolume(volumeId: VolumeId, title: string): Promise<ManuscriptActionResult> {
@@ -308,7 +455,7 @@ export class ManuscriptController implements ManuscriptReader, ManuscriptActions
     volume.title = assertNonEmptyTitle(title);
     next.updatedAt = this.timestamp();
     return this.writeManifestOnly(`重命名卷为“${volume.title}”。`, next, [
-      { type: "metadata", bookId: volume.bookId, volumeId }
+      { type: "metadata", bookId: next.book.id, volumeId }
     ]);
   }
 
@@ -377,73 +524,11 @@ export class ManuscriptController implements ManuscriptReader, ManuscriptActions
     ]);
   }
 
-  public async deleteBook(bookId: BookId): Promise<ManuscriptActionResult> {
-    const manifest = await this.loadManifest();
-    const originalText = stringifyManuscriptManifest(manifest);
-    const next = cloneManifest(manifest);
-    const book = requireBook(next, bookId);
-    const timestamp = this.timestamp();
-    const volumes = book.volumeIds.map((volumeId) => requireVolume(next, volumeId));
-    const chapters = volumes.flatMap((volume) => volume.chapterIds.map((chapterId) => requireChapter(next, chapterId)));
-    const trashItemId = createTrashItemId();
-    const trashPath = createTrashItemPath(trashItemId);
-    const directoryMove = await createExistingDirectoryTrashMove(this.workspaceRoot, book.path, trashPath);
-    const requiresSecondConfirmation = volumes.length > 0 || chapters.length > 0;
-
-    next.trash.itemIds.unshift(trashItemId);
-    next.trash.items[trashItemId] = {
-      id: trashItemId,
-      kind: "book",
-      title: book.title,
-      deletedAt: timestamp,
-      originalPath: book.path,
-      trashPath,
-      bookIds: [book.id],
-      books: recordById<ManuscriptBook>([book]),
-      volumes: recordById<ManuscriptVolume>(volumes),
-      chapters: recordById<ManuscriptChapter>(chapters)
-    };
-    next.bookIds = next.bookIds.filter((id) => id !== bookId);
-    delete next.books[bookId];
-    for (const volume of volumes) {
-      delete next.volumes[volume.id];
-    }
-    for (const chapter of chapters) {
-      delete next.chapters[chapter.id];
-    }
-    next.updatedAt = timestamp;
-
-    const plan = manifestPlan(
-      `将书籍“${book.title}”移入回收站${chapters.length > 0 ? `（包含 ${chapters.length} 个章节）` : ""}。`,
-      trashDirectoriesFor(trashPath)
-    );
-    if (directoryMove) {
-      plan.directoriesToMove = [directoryMove];
-    }
-    assertSafeManuscriptOperations(plan);
-
-    return this.applyManifestPlan(
-      plan,
-      next,
-      async (writer) => {
-        await this.applyMoveToTrash(writer, originalText, next, {
-          directoriesToCreate: trashDirectoriesFor(trashPath),
-          directoriesToMove: directoryMove ? [directoryMove] : []
-        });
-      },
-      [{ type: "structure", bookId, trashItemId }],
-      requiresSecondConfirmation
-        ? `书籍“${book.title}”包含 ${volumes.length} 个卷、${chapters.length} 个章节。删除后会移入回收站；在回收站中永久删除会递归删除对应目录。确认删除？`
-        : undefined
-    );
-  }
-
   public async deleteVolume(volumeId: VolumeId): Promise<ManuscriptActionResult> {
     const manifest = await this.loadManifest();
     const originalText = stringifyManuscriptManifest(manifest);
     const next = cloneManifest(manifest);
     const volume = requireVolume(next, volumeId);
-    const book = requireBook(next, volume.bookId);
     const timestamp = this.timestamp();
     const chapters = volume.chapterIds.map((chapterId) => requireChapter(next, chapterId));
     const trashItemId = createTrashItemId();
@@ -458,12 +543,10 @@ export class ManuscriptController implements ManuscriptReader, ManuscriptActions
       deletedAt: timestamp,
       originalPath: volume.path,
       trashPath,
-      bookIds: [],
-      books: {},
       volumes: recordById<ManuscriptVolume>([volume]),
       chapters: recordById<ManuscriptChapter>(chapters)
     };
-    book.volumeIds = book.volumeIds.filter((id) => id !== volumeId);
+    next.volumeIds = next.volumeIds.filter((id) => id !== volumeId);
     delete next.volumes[volumeId];
     for (const chapter of chapters) {
       delete next.chapters[chapter.id];
@@ -488,7 +571,7 @@ export class ManuscriptController implements ManuscriptReader, ManuscriptActions
           directoriesToMove: directoryMove ? [directoryMove] : []
         });
       },
-      [{ type: "structure", bookId: book.id, volumeId, trashItemId }],
+      [{ type: "structure", bookId: next.book.id, volumeId, trashItemId }],
       chapters.length > 0
         ? `卷“${volume.title}”包含 ${chapters.length} 个章节。删除后会移入回收站；在回收站中永久删除会递归删除对应目录。确认删除？`
         : undefined
@@ -514,8 +597,6 @@ export class ManuscriptController implements ManuscriptReader, ManuscriptActions
       deletedAt: timestamp,
       originalPath: chapter.path,
       trashPath,
-      bookIds: [],
-      books: {},
       volumes: {},
       chapters: recordById<ManuscriptChapter>([chapter])
     };
@@ -651,44 +732,35 @@ export class ManuscriptController implements ManuscriptReader, ManuscriptActions
       statusCounts.set(item.chapter.status, (statusCounts.get(item.chapter.status) ?? 0) + 1);
     }
 
-    const lines = ["# 手稿统计", ""];
+    const lines = ["# 手稿统计", "", `## ${manifest.book.title}`, ""];
     let grandTotal = 0;
+    let bookTotal = 0;
 
-    for (const bookId of manifest.bookIds) {
-      const book = manifest.books[bookId];
-      if (!book) {
+    for (const volumeId of manifest.volumeIds) {
+      const volume = manifest.volumes[volumeId];
+      if (!volume) {
         continue;
       }
 
-      lines.push(`## ${book.title}`, "");
-      let bookTotal = 0;
-      for (const volumeId of book.volumeIds) {
-        const volume = manifest.volumes[volumeId];
-        if (!volume) {
+      let volumeTotal = 0;
+      const chapterRows: string[] = [];
+      for (const chapterId of volume.chapterIds) {
+        const stat = chapterStats.find((item) => item.chapter.id === chapterId);
+        if (!stat) {
           continue;
         }
 
-        let volumeTotal = 0;
-        const chapterRows: string[] = [];
-        for (const chapterId of volume.chapterIds) {
-          const stat = chapterStats.find((item) => item.chapter.id === chapterId);
-          if (!stat) {
-            continue;
-          }
-
-          volumeTotal += stat.wordCount;
-          chapterRows.push(formatChapterStat(stat.chapter, stat.wordCount, stat.isEmpty));
-        }
-
-        bookTotal += volumeTotal;
-        lines.push(`### ${volume.title}（${volumeTotal} 字）`, "");
-        lines.push(...(chapterRows.length === 0 ? ["- 暂无章节。"] : chapterRows), "");
+        volumeTotal += stat.wordCount;
+        chapterRows.push(formatChapterStat(stat.chapter, stat.wordCount, stat.isEmpty));
       }
 
-      grandTotal += bookTotal;
-      lines.push(`本书合计：${bookTotal} 字`, "");
+      bookTotal += volumeTotal;
+      lines.push(`### ${volume.title}（${volumeTotal} 字）`, "");
+      lines.push(...(chapterRows.length === 0 ? ["- 暂无章节。"] : chapterRows), "");
     }
 
+    grandTotal += bookTotal;
+    lines.push(`本书合计：${bookTotal} 字`, "");
     lines.push("## 状态汇总", "");
     for (const [status, count] of statusCounts.entries()) {
       lines.push(`- ${formatStatus(status)}：${count}`);
@@ -774,6 +846,43 @@ export class ManuscriptController implements ManuscriptReader, ManuscriptActions
     return pathExists(path.join(this.workspaceRoot, normalized));
   }
 
+  private async allocateVolumePath(manifest: ManuscriptManifest): Promise<string> {
+    const usedPaths = new Set(Object.values(manifest.volumes).map((volume) => normalizeRelativePath(volume.path)));
+    let nextNumber = 1;
+
+    for (const volumePath of usedPaths) {
+      const match = /^manuscript\/volume-(\d+)$/.exec(volumePath);
+      if (match) {
+        nextNumber = Math.max(nextNumber, Number(match[1]) + 1);
+      }
+    }
+
+    try {
+      const entries = await fs.readdir(path.join(this.workspaceRoot, MANUSCRIPT_DIR), { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) {
+          continue;
+        }
+        const match = /^volume-(\d+)$/.exec(entry.name);
+        if (match) {
+          nextNumber = Math.max(nextNumber, Number(match[1]) + 1);
+        }
+      }
+    } catch (error) {
+      if (!isNotFound(error)) {
+        throw error;
+      }
+    }
+
+    let candidate: string;
+    do {
+      candidate = normalizeRelativePath(`${MANUSCRIPT_DIR}/${formatNumberedName("volume", nextNumber)}`);
+      nextNumber += 1;
+    } while (usedPaths.has(candidate) || (await pathExists(path.join(this.workspaceRoot, candidate))));
+
+    return candidate;
+  }
+
   private async applyMoveToTrash(
     writer: SafeFileWriter,
     originalManifestText: string,
@@ -855,6 +964,25 @@ export class ManuscriptController implements ManuscriptReader, ManuscriptActions
   private timestamp(): string {
     return this.options.now().toISOString();
   }
+
+  private async createProjectTitleUpdate(title: string, updatedAt: string): Promise<string | undefined> {
+    try {
+      const text = await fs.readFile(path.join(this.workspaceRoot, MANIFEST_RELATIVE_PATH), "utf8");
+      const value: unknown = JSON.parse(text);
+      if (!isRecord(value)) {
+        return undefined;
+      }
+      if (value.title === title && value.updatedAt === updatedAt) {
+        return undefined;
+      }
+      return `${JSON.stringify({ ...value, title, updatedAt }, null, 2)}\n`;
+    } catch (error) {
+      if (isNotFound(error) || error instanceof SyntaxError) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
 }
 
 function manifestPlan(summary: string, directoriesToCreate: string[] = [], filesToCreate: string[] = []): OperationPlan {
@@ -923,14 +1051,6 @@ function assertSafeManuscriptOperations(plan: OperationPlan): void {
   }
 }
 
-function requireBook(manifest: ManuscriptManifest, bookId: BookId) {
-  const book = manifest.books[bookId];
-  if (!book) {
-    throw new Error(`未找到书籍 "${bookId}"。`);
-  }
-  return book;
-}
-
 function requireVolume(manifest: ManuscriptManifest, volumeId: VolumeId) {
   const volume = manifest.volumes[volumeId];
   if (!volume) {
@@ -958,28 +1078,9 @@ function requireTrashItem(manifest: ManuscriptManifest, trashItemId: TrashItemId
 function restoreTrashSnapshot(manifest: ManuscriptManifest, item: ReturnType<typeof requireTrashItem>): void {
   assertTrashSnapshotHasNoActiveConflicts(manifest, item);
 
-  if (item.kind === "book") {
-    for (const bookId of item.bookIds) {
-      const book = item.books[bookId];
-      if (!book) {
-        throw new Error(`回收站项目缺少书籍快照 "${bookId}"。`);
-      }
-      manifest.bookIds.push(bookId);
-    }
-    Object.assign(manifest.books, item.books);
-    Object.assign(manifest.volumes, item.volumes);
-    Object.assign(manifest.chapters, item.chapters);
-    return;
-  }
-
   if (item.kind === "volume") {
     const volume = singleSnapshot(item.volumes, "卷");
-    const parentBook = manifest.books[volume.bookId];
-    if (!parentBook) {
-      throw new Error(`无法还原卷“${volume.title}”：父书籍已不存在。`);
-    }
-
-    parentBook.volumeIds.push(volume.id);
+    manifest.volumeIds.push(volume.id);
     Object.assign(manifest.volumes, item.volumes);
     Object.assign(manifest.chapters, item.chapters);
     return;
@@ -999,11 +1100,6 @@ function assertTrashSnapshotHasNoActiveConflicts(
   manifest: ManuscriptManifest,
   item: ReturnType<typeof requireTrashItem>
 ): void {
-  for (const id of Object.keys(item.books)) {
-    if (manifest.books[id]) {
-      throw new Error(`无法还原“${item.title}”：书籍 ID "${id}" 已存在。`);
-    }
-  }
   for (const id of Object.keys(item.volumes)) {
     if (manifest.volumes[id]) {
       throw new Error(`无法还原“${item.title}”：卷 ID "${id}" 已存在。`);
@@ -1032,12 +1128,9 @@ function singleSnapshot<T>(items: Record<string, T>, label: string): T {
 }
 
 function restoreEventFor(item: ReturnType<typeof requireTrashItem>): Partial<ManuscriptChangeEvent> {
-  if (item.kind === "book") {
-    return { type: "structure", bookId: item.bookIds[0], trashItemId: item.id };
-  }
   if (item.kind === "volume") {
     const volume = singleSnapshot(item.volumes, "卷");
-    return { type: "structure", bookId: volume.bookId, volumeId: volume.id, trashItemId: item.id };
+    return { type: "structure", volumeId: volume.id, trashItemId: item.id };
   }
 
   const chapter = singleSnapshot(item.chapters, "章节");
@@ -1088,6 +1181,11 @@ function clampIndex(value: number, max: number): number {
 
 function isSafeManuscriptRelativePath(relativePath: string): boolean {
   return !path.isAbsolute(relativePath) && isManuscriptPath(relativePath);
+}
+
+function isSafeBookAgentRelativePath(relativePath: string): boolean {
+  const normalized = normalizeRelativePath(relativePath);
+  return !path.isAbsolute(relativePath) && (normalized === bookAgentPath() || normalized === bookSystemAgentPath());
 }
 
 function isSafeManuscriptOrTrashRelativePath(relativePath: string): boolean {
@@ -1168,7 +1266,7 @@ async function createExistingDirectoryTrashMove(
 
 async function createExistingRestoreMove(
   workspaceRoot: string,
-  kind: "book" | "volume" | "chapter",
+  kind: "volume" | "chapter",
   originalPath: string,
   trashPath: string
 ): Promise<RestoreMoveOperation> {
@@ -1289,4 +1387,8 @@ function isInside(root: string, candidate: string): boolean {
 
 function isNotFound(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

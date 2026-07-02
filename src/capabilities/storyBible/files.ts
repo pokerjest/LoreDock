@@ -474,10 +474,18 @@ async function parseCardFrontmatter(
     add("error", "storyBible.card.status.invalid", "status 必须是 draft、canon 或 archived。");
   }
   if (!isIsoTimestamp(createdAt)) {
-    add("error", "storyBible.card.createdAt.invalid", "createdAt 必须是 ISO 时间戳字符串。");
+    add(
+      "error",
+      "storyBible.card.createdAt.invalid",
+      "createdAt 必须是 ISO 时间戳字符串，例如 \"2026-07-01T12:00:00.000Z\"。不要使用“今天”“刚才”或非 ISO 文本。"
+    );
   }
   if (!isIsoTimestamp(updatedAt)) {
-    add("error", "storyBible.card.updatedAt.invalid", "updatedAt 必须是 ISO 时间戳字符串。");
+    add(
+      "error",
+      "storyBible.card.updatedAt.invalid",
+      "updatedAt 必须是 ISO 时间戳字符串，例如 \"2026-07-01T12:00:00.000Z\"。不要使用“今天”“刚才”或非 ISO 文本。"
+    );
   }
   if (data.chapterRefs !== undefined && !Array.isArray(data.chapterRefs)) {
     add("error", "storyBible.card.chapterRefs.invalid", "chapterRefs 必须是字符串数组。");
@@ -489,9 +497,6 @@ async function parseCardFrontmatter(
   for (const tag of tags) {
     if (!isValidKeywordSlug(tag)) {
       add("warning", "storyBible.card.tagSlug.invalid", `keyword slug "${tag}" 不合法。`);
-    }
-    if (isReservedObjectKeywordSlug(tag) && type && !tag.startsWith(objectKeywordPrefixFor(type))) {
-      add("warning", "storyBible.card.tag.reservedPrefixMismatch", `对象关键词 "${tag}" 与条目 type "${type}" 不匹配。`);
     }
   }
 
@@ -652,10 +657,18 @@ function parseKeywordFrontmatter(
     }
   }
   if (!isIsoTimestamp(createdAt)) {
-    add("error", "storyBible.keyword.createdAt.invalid", "createdAt 必须是 ISO 时间戳字符串。");
+    add(
+      "error",
+      "storyBible.keyword.createdAt.invalid",
+      "createdAt 必须是 ISO 时间戳字符串，例如 \"2026-07-01T12:00:00.000Z\"。不要使用“今天”“刚才”或非 ISO 文本。"
+    );
   }
   if (!isIsoTimestamp(updatedAt)) {
-    add("error", "storyBible.keyword.updatedAt.invalid", "updatedAt 必须是 ISO 时间戳字符串。");
+    add(
+      "error",
+      "storyBible.keyword.updatedAt.invalid",
+      "updatedAt 必须是 ISO 时间戳字符串，例如 \"2026-07-01T12:00:00.000Z\"。不要使用“今天”“刚才”或非 ISO 文本。"
+    );
   }
 
   if (

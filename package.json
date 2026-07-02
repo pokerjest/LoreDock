@@ -2,7 +2,7 @@
   "name": "loredock",
   "displayName": "LoreDock",
   "description": "面向 VS Code 的本地优先故事项目系统。",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "publisher": "loredock",
   "license": "UNLICENSED",
   "engines": {
@@ -19,6 +19,9 @@
     "onCommand:loredock.showDiagnostics",
     "onCommand:loredock.repairProjectManifest",
     "onCommand:loredock.enableManuscript",
+    "onCommand:loredock.manuscript.createBook",
+    "onCommand:loredock.manuscript.switchBook",
+    "onCommand:loredock.manuscript.refreshBookAgentGuide",
     "onCommand:loredock.enableStoryBible",
     "onCommand:loredock.storyBible.openGallery",
     "onCommand:loredock.storyBible.createCard",
@@ -57,13 +60,18 @@
       },
       {
         "command": "loredock.manuscript.createBook",
-        "title": "LoreDock：新建书籍",
+        "title": "LoreDock：新建书籍项目",
         "icon": "$(new-folder)"
+      },
+      {
+        "command": "loredock.manuscript.switchBook",
+        "title": "LoreDock：切换书籍",
+        "icon": "$(folder-opened)"
       },
       {
         "command": "loredock.manuscript.createVolume",
         "title": "LoreDock：新建卷",
-        "icon": "$(library)"
+        "icon": "$(add)"
       },
       {
         "command": "loredock.manuscript.createChapter",
@@ -78,6 +86,11 @@
       {
         "command": "loredock.manuscript.renameBook",
         "title": "LoreDock：重命名书籍"
+      },
+      {
+        "command": "loredock.manuscript.refreshBookAgentGuide",
+        "title": "LoreDock：刷新书籍 AI 指南",
+        "icon": "$(tools)"
       },
       {
         "command": "loredock.manuscript.renameVolume",
@@ -100,10 +113,6 @@
         "command": "loredock.manuscript.moveChapterDown",
         "title": "LoreDock：下移章节",
         "icon": "$(arrow-down)"
-      },
-      {
-        "command": "loredock.manuscript.deleteBook",
-        "title": "LoreDock：删除书籍"
       },
       {
         "command": "loredock.manuscript.deleteVolume",
@@ -188,15 +197,23 @@
       },
       {
         "command": "loredock.storyBible.renameCard",
-        "title": "LoreDock：重命名条目"
+        "title": "LoreDock：重命名条目",
+        "icon": "$(edit)"
       },
       {
         "command": "loredock.storyBible.editCardMetadata",
-        "title": "LoreDock：编辑条目元数据"
+        "title": "LoreDock：编辑条目元数据",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "loredock.storyBible.repairCardPrimaryKeyword",
+        "title": "LoreDock：修复条目主关键词",
+        "icon": "$(wrench)"
       },
       {
         "command": "loredock.storyBible.deleteCard",
-        "title": "LoreDock：删除条目"
+        "title": "LoreDock：删除条目",
+        "icon": "$(trash)"
       },
       {
         "command": "loredock.storyBible.searchCards",
@@ -225,11 +242,13 @@
       },
       {
         "command": "loredock.storyBible.editKeywordDefinition",
-        "title": "LoreDock：编辑关键词定义"
+        "title": "LoreDock：编辑关键词定义",
+        "icon": "$(edit)"
       },
       {
         "command": "loredock.storyBible.deleteKeywordDefinition",
-        "title": "LoreDock：删除关键词定义"
+        "title": "LoreDock：删除关键词定义",
+        "icon": "$(trash)"
       },
       {
         "command": "loredock.storyBible.restoreTrashItem",
@@ -281,7 +300,7 @@
           "group": "navigation"
         },
         {
-          "command": "loredock.manuscript.createBook",
+          "command": "loredock.manuscript.createVolume",
           "when": "view == loredock.manuscript.tree && loredock.manuscript.active && !loredock.manuscript.trashMode",
           "group": "navigation"
         },
@@ -347,7 +366,7 @@
           "when": "view == loredock.manuscript.tree && viewItem == loredock.manuscript.book"
         },
         {
-          "command": "loredock.manuscript.deleteBook",
+          "command": "loredock.manuscript.refreshBookAgentGuide",
           "when": "view == loredock.manuscript.tree && viewItem == loredock.manuscript.book"
         },
         {
@@ -443,6 +462,10 @@
         },
         {
           "command": "loredock.storyBible.editCardMetadata",
+          "when": "view == loredock.storyBible.tree && viewItem == loredock.storyBible.card"
+        },
+        {
+          "command": "loredock.storyBible.repairCardPrimaryKeyword",
           "when": "view == loredock.storyBible.tree && viewItem == loredock.storyBible.card"
         },
         {

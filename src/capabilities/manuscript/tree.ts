@@ -150,10 +150,7 @@ export class ManuscriptTreeProvider implements vscode.TreeDataProvider<Manuscrip
     }
 
     return [
-      ...manifest.bookIds.map((id) => {
-        const book = manifest.books[id];
-        return { kind: "book" as const, workspaceFolder, id: book.id, title: book.title };
-      }),
+      { kind: "book" as const, workspaceFolder, id: manifest.book.id, title: manifest.book.title },
       { kind: "notes", workspaceFolder, title: "笔记", path: MANUSCRIPT_NOTES_PATH }
     ];
   }
@@ -165,8 +162,7 @@ export class ManuscriptTreeProvider implements vscode.TreeDataProvider<Manuscrip
         return [];
       }
       const { manifest } = result;
-      const book = manifest.books[element.id];
-      return book.volumeIds.map((id) => {
+      return manifest.volumeIds.map((id) => {
         const volume = manifest.volumes[id];
         return {
           kind: "volume" as const,
@@ -302,8 +298,6 @@ function formatStatus(status: string): string {
 
 function formatTrashKind(kind: ManuscriptTrashKind): string {
   switch (kind) {
-    case "book":
-      return "书籍";
     case "volume":
       return "卷";
     case "chapter":

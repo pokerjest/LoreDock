@@ -225,11 +225,6 @@ export class StoryBibleTreeProvider implements vscode.TreeDataProvider<StoryBibl
         const item = treeItem(element.title, "loredock.storyBible.card", vscode.TreeItemCollapsibleState.None, cardIcon(element.type));
         item.description = `${element.primaryKeywordLabel} · ${formatStatus(element.status)}`;
         item.resourceUri = vscode.Uri.file(path.join(element.workspaceFolder.uri.fsPath, element.path));
-        item.command = {
-          command: "loredock.storyBible.openCard",
-          title: "打开条目",
-          arguments: [element]
-        };
         return item;
       }
       case "keyword": {
@@ -243,11 +238,6 @@ export class StoryBibleTreeProvider implements vscode.TreeDataProvider<StoryBibl
         item.tooltip = `${element.slug} · ${element.source}`;
         if (element.definitionPath) {
           item.resourceUri = vscode.Uri.file(path.join(element.workspaceFolder.uri.fsPath, element.definitionPath));
-          item.command = {
-            command: "loredock.storyBible.openKeywordDefinition",
-            title: "打开关键词定义",
-            arguments: [element]
-          };
         }
         return item;
       }

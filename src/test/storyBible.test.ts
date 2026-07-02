@@ -178,7 +178,22 @@ suite("Story Bible", function () {
     assert.equal((await controller.searchCards({ keyword: "theme/revenge" })).length, 1);
   });
 
-  test("deleting keyword definition moves only the definition to resource trash and leaves card tags inferred", async () => {
+  test("allows global cross-type object tags outside tags[0]", async () => {
+    await controller.createCard("character", "Alex");
+    await controller.createCard("location", "Old Dock");
+    const character = (await controller.listCards({ type: "character" }))[0];
+    const location = (await controller.listCards({ type: "location" }))[0];
+
+    await controller.updateCardMetadata(character.id, { tags: [character.primaryKeyword, location.primaryKeyword] });
+
+    const updated = (await controller.getCard(character.id))!;
+    const result = await readStoryBible(workspace);
+    assert.deepEqual(updated.tags, [character.primaryKeyword, location.primaryKeyword]);
+    assert.equal(result.diagnostics.some((item) => item.code === "storyBible.card.primaryKeyword.missing"), false);
+    assert.equal(result.diagnostics.some((item) => item.code === "storyBible.card.tag.reservedPrefixMismatch"), false);
+  });
+
+  test("deleting keyword definition removes the tag from cards and moves definition to resource trash", async () => {
     await controller.createCard("character", "Alex");
     const card = (await controller.listCards())[0];
     await controller.defineKeyword({ slug: "theme/revenge", label: "复仇" });
@@ -187,12 +202,13 @@ suite("Story Bible", function () {
     await controller.deleteKeywordDefinition("theme/revenge");
 
     const after = (await controller.listCards())[0];
-    const keyword = (await controller.listKeywords()).find((item) => item.slug === "theme/revenge")!;
+    const keyword = (await controller.listKeywords()).find((item) => item.slug === "theme/revenge");
     const trashItems = await controller.listTrashItems();
 
-    assert.deepEqual(after.tags, [card.primaryKeyword, "theme/revenge"]);
-    assert.equal(keyword.source, "inferred");
-    assert.equal(keyword.usageCount, 1);
+    assert.deepEqual(after.tags, [card.primaryKeyword]);
+    assert.equal(keyword, undefined);
+    assert.equal(destructivePrompts.length, 1);
+    assert.match(destructivePrompts[0], /正在被 1 个条目使用/);
     assert.equal(trashItems[0].resourceType, "keyword-definition");
     assert.equal(await exists(path.join(workspace, STORY_BIBLE_TRASH_DIR)), true);
     assert.equal(await exists(path.join(workspace, ".loredock/trash/manuscript")), false);
@@ -309,6 +325,70 @@ suite("Story Bible", function () {
     assert.equal(result.diagnostics.some((item) => item.code === "storyBible.card.primaryKeyword.duplicate"), true);
   });
 
+  test("repairs cards whose primary keyword uses the wrong object type", async () => {
+    const cardPath = path.join(workspace, STORY_BIBLE_CHARACTER_DIR, "bad-hero.md");
+    await fs.writeFile(
+      cardPath,
+      [
+        "---",
+        'schemaVersion: "0.2.0"',
+        'id: "story_bad_hero"',
+        'type: "character"',
+        'name: "Bad Hero"',
+        "aliases: []",
+        "tags:",
+        '  - "location/wrong-room"',
+        'summary: "Has the wrong primary keyword."',
+        'visibility: "public"',
+        'status: "draft"',
+        'createdAt: "2026-06-29T00:00:00.000Z"',
+        'updatedAt: "2026-06-29T00:00:00.000Z"',
+        "chapterRefs: []",
+        "---",
+        "# Bad Hero",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    let result = await readStoryBible(workspace);
+    assert.equal(result.diagnostics.some((item) => item.code === "storyBible.card.primaryKeyword.missing"), true);
+    const card = (await controller.listCards()).find((item) => item.name === "Bad Hero")!;
+
+    await controller.repairCardPrimaryKeyword(card.id);
+
+    const repaired = (await controller.listCards()).find((item) => item.id === card.id)!;
+    result = await readStoryBible(workspace);
+    assert.equal(repaired.tags[0], "character/bad-hero");
+    assert.equal(repaired.tags[1], "location/wrong-room");
+    assert.equal(result.diagnostics.some((item) => item.code === "storyBible.card.primaryKeyword.missing"), false);
+  });
+
+  test("explains how to repair non ISO card timestamps", async () => {
+    await controller.createCard("character", "Alex");
+    const card = (await controller.listCards())[0];
+    const absolutePath = path.join(workspace, card.path);
+    const text = await fs.readFile(absolutePath, "utf8");
+    await fs.writeFile(
+      absolutePath,
+      text
+        .replace(/createdAt: ".+"/, 'createdAt: "今天"')
+        .replace(/updatedAt: ".+"/, 'updatedAt: "刚才"'),
+      "utf8"
+    );
+
+    const result = await readStoryBible(workspace);
+    const timestampDiagnostics = result.diagnostics.filter(
+      (item) =>
+        item.code === "storyBible.card.createdAt.invalid" ||
+        item.code === "storyBible.card.updatedAt.invalid"
+    );
+
+    assert.equal(timestampDiagnostics.length, 2);
+    assert.equal(timestampDiagnostics.every((item) => item.message.includes("2026-07-01T12:00:00.000Z")), true);
+    assert.equal(timestampDiagnostics.every((item) => item.message.includes("不要使用“今天”“刚才”")), true);
+  });
+
   test("diagnoses orphan markdown duplicate labels and reserved keyword definitions", async () => {
     await controller.createCard("character", "Alex", { aliases: ["Ace"] });
     await controller.createCard("character", "Alex", { aliases: ["Ace"] });
@@ -400,7 +480,9 @@ suite("Story Bible", function () {
       const characterGroup = activeNodes.find((node) => node.kind === "group" && node.group === "character");
       assert.ok(characterGroup);
       const children = await activeTree.getChildren(characterGroup);
-      assert.equal(children.some((node) => node.kind === "card" && node.title === "Alex"), true);
+      const cardNode = children.find((node) => node.kind === "card" && node.title === "Alex");
+      assert.ok(cardNode);
+      assert.equal(activeTree.getTreeItem(cardNode).command, undefined);
     } finally {
       await fs.rm(emptyWorkspace, { recursive: true, force: true });
     }

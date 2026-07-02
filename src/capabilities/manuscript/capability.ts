@@ -2,11 +2,11 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import * as vscode from "vscode";
 import { registerExclusiveCommand } from "../../kernel/commandRegistry";
-import { validateProjectManifest } from "../../kernel/manifest";
+import { createDefaultManifest, validateProjectManifest } from "../../kernel/manifest";
 import { SafeFileWriter } from "../../kernel/safeFileWriter";
 import { inspectExistingWorkspacePath } from "../../kernel/safeWorkspacePath";
 import type { Capability, KernelContext, OperationPlan, ProjectManifest } from "../../kernel/types";
-import { MANIFEST_RELATIVE_PATH } from "../../kernel/types";
+import { LOREDOCK_DIR, MANIFEST_RELATIVE_PATH } from "../../kernel/types";
 import {
   createInitialManuscriptManifest,
   readManuscriptManifest,
@@ -14,9 +14,17 @@ import {
   resolveExistingSafeManuscriptPath,
   stringifyManuscriptManifest
 } from "./manifest";
-import { bookAgentPath, createBookAgentText } from "./bookAgent";
+import { bookAgentPath, bookSystemAgentPath, createBookAgentText, createBookSystemAgentText } from "./bookAgent";
 import { ManuscriptController } from "./controller";
 import { ManuscriptTreeProvider, type ManuscriptTreeNode } from "./tree";
+import {
+  LORE_DIR,
+  STORY_BIBLE_CAPABILITY_ID,
+  STORY_BIBLE_CHARACTER_DIR,
+  STORY_BIBLE_LOCATION_DIR,
+  STORY_BIBLE_RULE_DIR,
+  STORY_BIBLE_TAG_DIR
+} from "../storyBible/types";
 import {
   MANUSCRIPT_CAPABILITY_ID,
   MANUSCRIPT_DIR,
@@ -25,7 +33,6 @@ import {
   MANUSCRIPT_SCHEMA_ID,
   MANUSCRIPT_SCHEMA_VERSION,
   MANUSCRIPT_STATUSES,
-  type BookId,
   type ChapterId,
   type ManuscriptStatus,
   type VolumeId
@@ -42,7 +49,7 @@ let sharedToggleTrashCommandRegistration: vscode.Disposable | undefined;
 
 export const manuscriptCapability: Capability = {
   id: MANUSCRIPT_CAPABILITY_ID,
-  bootstrapCommands: ["loredock.enableManuscript"],
+  bootstrapCommands: ["loredock.enableManuscript", "loredock.manuscript.createBook", "loredock.manuscript.switchBook"],
   bootstrap(context) {
     const tree = getOrCreateTreeProvider();
     const projectWatcher = context.registerFileWatcher(
@@ -56,6 +63,8 @@ export const manuscriptCapability: Capability = {
     return [
       acquireSharedTreeRegistration(context, tree),
       context.registerCommand("loredock.enableManuscript", () => enableManuscript(context)),
+      context.registerCommand("loredock.manuscript.createBook", () => createBookProject(context)),
+      context.registerCommand("loredock.manuscript.switchBook", () => switchBookProject()),
       projectWatcher,
       projectWatcher.onDidCreate(refresh),
       projectWatcher.onDidChange(refresh),
@@ -85,17 +94,18 @@ export const manuscriptCapability: Capability = {
       watcher.onDidCreate((uri) => handleWatchedFile(context, controller, tree, uri)),
       watcher.onDidChange((uri) => handleWatchedFile(context, controller, tree, uri)),
       watcher.onDidDelete((uri) => handleWatchedFile(context, controller, tree, uri)),
-      context.registerCommand("loredock.manuscript.createBook", () => createBook(controller)),
-      context.registerCommand("loredock.manuscript.createVolume", (node) => createVolume(controller, node)),
+      context.registerCommand("loredock.manuscript.createBook", () => createBookProject(context)),
+      context.registerCommand("loredock.manuscript.switchBook", () => switchBookProject()),
+      context.registerCommand("loredock.manuscript.createVolume", () => createVolume(controller)),
       context.registerCommand("loredock.manuscript.createChapter", (node) => createChapter(controller, node)),
       context.registerCommand("loredock.manuscript.openChapter", (node) => openChapter(context, controller, node)),
-      context.registerCommand("loredock.manuscript.renameBook", (node) => renameBook(controller, node)),
+      context.registerCommand("loredock.manuscript.renameBook", () => renameBook(context, controller)),
+      context.registerCommand("loredock.manuscript.refreshBookAgentGuide", () => refreshBookAgentGuide(controller)),
       context.registerCommand("loredock.manuscript.renameVolume", (node) => renameVolume(controller, node)),
       context.registerCommand("loredock.manuscript.renameChapter", (node) => renameChapter(controller, node)),
       context.registerCommand("loredock.manuscript.moveChapter", (node) => moveChapter(controller, node)),
       context.registerCommand("loredock.manuscript.moveChapterUp", (node) => moveChapterRelative(controller, node, -1)),
       context.registerCommand("loredock.manuscript.moveChapterDown", (node) => moveChapterRelative(controller, node, 1)),
-      context.registerCommand("loredock.manuscript.deleteBook", (node) => deleteBook(controller, node)),
       context.registerCommand("loredock.manuscript.deleteVolume", (node) => deleteVolume(controller, node)),
       context.registerCommand("loredock.manuscript.deleteChapter", (node) => deleteChapter(controller, node)),
       context.registerCommand("loredock.manuscript.restoreTrashItem", (node) => restoreTrashItem(controller, node)),
@@ -110,7 +120,7 @@ export const manuscriptCapability: Capability = {
       context.registerCommand("loredock.manuscript.showStats", () => showStats(controller))
     ];
 
-    void controller.refreshDiagnostics().then(() => refreshManuscriptTree(tree));
+    void syncBookAgentGuidesOnStartup(context, controller, tree);
     return disposables;
   }
 };
@@ -175,6 +185,37 @@ async function refreshManuscriptTree(tree: ManuscriptTreeProvider): Promise<void
   await updateManuscriptContext();
   await vscode.commands.executeCommand("setContext", MANUSCRIPT_TRASH_MODE_CONTEXT, tree.isTrashMode);
   tree.refresh();
+}
+
+async function syncBookAgentGuidesOnStartup(
+  context: KernelContext,
+  controller: ManuscriptController,
+  tree: ManuscriptTreeProvider
+): Promise<void> {
+  try {
+    const titleSynced = await controller.syncBookTitleWithWorkspaceFolder();
+    if (titleSynced) {
+      context.output.appendLine("已同步书名为当前文件夹名。");
+    }
+    const result = await controller.syncBookAgentGuides();
+    const changedCount = result.filesCreated.length + result.filesModified.length;
+    if (changedCount > 0) {
+      context.output.appendLine(
+        `已同步 ${changedCount} 个书籍 AI 指南系统规则，用户自定义规则已保留。`
+      );
+    }
+    if (result.filesSkipped.length > 0) {
+      context.output.appendLine(
+        `跳过 ${result.filesSkipped.length} 个无法安全同步的书籍 AI 指南：${result.filesSkipped.join(", ")}`
+      );
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    context.output.appendLine(`同步书籍 AI 指南失败：${message}`);
+  }
+
+  await controller.refreshDiagnostics();
+  await refreshManuscriptTree(tree);
 }
 
 async function updateManuscriptContext(): Promise<void> {
@@ -246,16 +287,17 @@ async function enableManuscript(context: KernelContext): Promise<void> {
   };
 
   const firstEnable = manuscriptResult.status === "missing";
-  const initialManifest = createInitialManuscriptManifest(context.now());
-  const firstBook = initialManifest.books[initialManifest.bookIds[0]];
-  const firstVolume = initialManifest.volumes[firstBook.volumeIds[0]];
+  const initialManifest = createInitialManuscriptManifest(context.now(), path.basename(workspaceRoot));
+  const firstBook = initialManifest.book;
+  const firstVolume = initialManifest.volumes[initialManifest.volumeIds[0]];
   const firstChapter = initialManifest.chapters[firstVolume.chapterIds[0]];
-  const firstBookAgentPath = bookAgentPath(firstBook.path);
+  const firstBookAgentPath = bookAgentPath();
+  const firstBookSystemAgentPath = bookSystemAgentPath();
   const plan: OperationPlan = {
     summary: firstEnable ? "启用手稿并创建初始手稿结构。" : "启用现有手稿。",
-    directoriesToCreate: firstEnable ? [MANUSCRIPT_DIR, firstBook.path, firstVolume.path] : [],
+    directoriesToCreate: firstEnable ? [MANUSCRIPT_DIR, firstVolume.path] : [],
     filesToCreate: firstEnable
-      ? [MANUSCRIPT_MANIFEST_PATH, MANUSCRIPT_NOTES_PATH, firstBookAgentPath, firstChapter.path]
+      ? [MANUSCRIPT_MANIFEST_PATH, MANUSCRIPT_NOTES_PATH, firstBookSystemAgentPath, firstBookAgentPath, firstChapter.path]
       : [],
     filesToModify: [MANIFEST_RELATIVE_PATH]
   };
@@ -279,11 +321,11 @@ async function enableManuscript(context: KernelContext): Promise<void> {
   const writer = new SafeFileWriter(workspaceRoot, plan);
   if (firstEnable) {
     await writer.ensureDirectory(MANUSCRIPT_DIR);
-    await writer.ensureDirectory(firstBook.path);
     await writer.ensureDirectory(firstVolume.path);
     await writer.writeFile(MANUSCRIPT_MANIFEST_PATH, stringifyManuscriptManifest(initialManifest));
     await writer.writeFile(MANUSCRIPT_NOTES_PATH, "# 笔记\n\n");
-    await writer.writeFile(firstBookAgentPath, createBookAgentText(firstBook.title, firstBook.path));
+    await writer.writeFile(firstBookSystemAgentPath, createBookSystemAgentText(firstBook.title));
+    await writer.writeFile(firstBookAgentPath, createBookAgentText(firstBook.title));
     await writer.writeFile(firstChapter.path, "# 第一章\n\n");
   }
 
@@ -305,24 +347,117 @@ async function enableManuscript(context: KernelContext): Promise<void> {
   void vscode.window.showInformationMessage("手稿已启用。");
 }
 
-async function createBook(controller: ManuscriptController): Promise<void> {
-  const title = await vscode.window.showInputBox({ title: "新建书籍", value: "新书" });
-  if (title === undefined) {
+async function createBookProject(context: KernelContext): Promise<void> {
+  const folderUris = await vscode.window.showOpenDialog({
+    title: "选择或创建书籍文件夹",
+    openLabel: "作为新书打开",
+    canSelectFiles: false,
+    canSelectFolders: true,
+    canSelectMany: false
+  });
+  const folderUri = folderUris?.[0];
+  if (!folderUri) {
     return;
   }
-  await controller.createBook(title);
+
+  if (await initializeBookProject(context, folderUri, path.basename(folderUri.fsPath))) {
+    await vscode.commands.executeCommand("vscode.openFolder", folderUri, false);
+  }
 }
 
-async function createVolume(controller: ManuscriptController, node: unknown): Promise<void> {
-  const bookId = isBookNode(node) ? node.id : await pickBook(controller);
-  if (!bookId) {
+async function switchBookProject(): Promise<void> {
+  const folderUris = await vscode.window.showOpenDialog({
+    title: "选择书籍文件夹",
+    openLabel: "打开书籍",
+    canSelectFiles: false,
+    canSelectFolders: true,
+    canSelectMany: false
+  });
+  const folderUri = folderUris?.[0];
+  if (!folderUri) {
     return;
   }
+  await vscode.commands.executeCommand("vscode.openFolder", folderUri, false);
+}
+
+async function initializeBookProject(context: KernelContext, folderUri: vscode.Uri, title: string): Promise<boolean> {
+  const workspaceRoot = folderUri.fsPath;
+  const cleanTitle = title.trim() || "新书";
+  const initialManifest = createInitialManuscriptManifest(context.now(), cleanTitle);
+  const firstVolume = initialManifest.volumes[initialManifest.volumeIds[0]];
+  const firstChapter = initialManifest.chapters[firstVolume.chapterIds[0]];
+  const projectManifest: ProjectManifest = {
+    ...createDefaultManifest(workspaceRoot, context.now()),
+    title: cleanTitle,
+    capabilities: [MANUSCRIPT_CAPABILITY_ID, STORY_BIBLE_CAPABILITY_ID]
+  };
+  const systemAgentPath = bookSystemAgentPath();
+  const userAgentPath = bookAgentPath();
+  const plan: OperationPlan = {
+    summary: `新建书籍项目“${cleanTitle}”。`,
+    directoriesToCreate: [
+      LOREDOCK_DIR,
+      MANUSCRIPT_DIR,
+      firstVolume.path,
+      LORE_DIR,
+      STORY_BIBLE_CHARACTER_DIR,
+      STORY_BIBLE_LOCATION_DIR,
+      STORY_BIBLE_RULE_DIR,
+      STORY_BIBLE_TAG_DIR
+    ],
+    filesToCreate: [
+      MANIFEST_RELATIVE_PATH,
+      MANUSCRIPT_MANIFEST_PATH,
+      MANUSCRIPT_NOTES_PATH,
+      systemAgentPath,
+      userAgentPath,
+      firstChapter.path
+    ],
+    filesToModify: []
+  };
+  const existingPaths = await findExistingRelativePaths(workspaceRoot, [
+    ...plan.filesToCreate,
+    MANUSCRIPT_DIR,
+    LORE_DIR
+  ]);
+
+  if (existingPaths.length > 0) {
+    const choice = await vscode.window.showWarningMessage(
+      `目标文件夹已包含 LoreDock 或书籍文件：${existingPaths.join(", ")}`,
+      { modal: true },
+      "打开该文件夹"
+    );
+    if (choice === "打开该文件夹") {
+      await vscode.commands.executeCommand("vscode.openFolder", folderUri, false);
+    }
+    return false;
+  }
+
+  const confirmed = await context.confirmOperationPlan(plan);
+  if (!confirmed) {
+    context.output.appendLine("已取消新建书籍项目，未写入文件。");
+    return false;
+  }
+
+  const writer = new SafeFileWriter(workspaceRoot, plan);
+  for (const directory of plan.directoriesToCreate) {
+    await writer.ensureDirectory(directory);
+  }
+  await writer.writeFile(MANIFEST_RELATIVE_PATH, `${JSON.stringify(projectManifest, null, 2)}\n`);
+  await writer.writeFile(MANUSCRIPT_MANIFEST_PATH, stringifyManuscriptManifest(initialManifest));
+  await writer.writeFile(MANUSCRIPT_NOTES_PATH, "# 笔记\n\n");
+  await writer.writeFile(systemAgentPath, createBookSystemAgentText(cleanTitle));
+  await writer.writeFile(userAgentPath, createBookAgentText(cleanTitle));
+  await writer.writeFile(firstChapter.path, "# 第一章\n\n");
+  return true;
+}
+
+async function createVolume(controller: ManuscriptController): Promise<void> {
   const title = await vscode.window.showInputBox({ title: "新建卷", value: "新卷" });
   if (title === undefined) {
     return;
   }
-  await controller.createVolume(bookId, title);
+  await controller.createVolume(title);
 }
 
 async function createChapter(controller: ManuscriptController, node: unknown): Promise<void> {
@@ -356,15 +491,51 @@ async function openChapter(
   await openRelativeFile(context.workspaceFolder, relativePath);
 }
 
-async function renameBook(controller: ManuscriptController, node: unknown): Promise<void> {
-  const bookId = isBookNode(node) ? node.id : await pickBook(controller);
-  if (!bookId) {
+async function renameBook(context: KernelContext, controller: ManuscriptController): Promise<void> {
+  const workspaceRoot = context.workspaceFolder.uri.fsPath;
+  const currentFolderName = path.basename(workspaceRoot);
+  const title = await vscode.window.showInputBox({
+    title: "重命名书籍",
+    value: currentFolderName,
+    prompt: "书名会与外层文件夹名保持一致。"
+  });
+  if (title === undefined) {
     return;
   }
-  const title = await vscode.window.showInputBox({ title: "重命名书籍" });
-  if (title !== undefined) {
-    await controller.renameBook(bookId, title);
+
+  let folderName: string;
+  try {
+    folderName = normalizeBookFolderName(title);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    void vscode.window.showWarningMessage(message);
+    return;
   }
+  const targetRoot = path.join(path.dirname(workspaceRoot), folderName);
+  if (path.resolve(targetRoot) === path.resolve(workspaceRoot)) {
+    await controller.renameBook(folderName);
+    return;
+  }
+
+  if (await pathExists(targetRoot)) {
+    void vscode.window.showWarningMessage(`目标文件夹已存在：${targetRoot}`);
+    return;
+  }
+
+  const oldBook = await controller.getBook();
+  await controller.renameBook(folderName);
+  try {
+    await fs.rename(workspaceRoot, targetRoot);
+  } catch (error) {
+    await controller.renameBook(oldBook.title).catch(() => undefined);
+    throw error;
+  }
+
+  await vscode.commands.executeCommand("vscode.openFolder", vscode.Uri.file(targetRoot), false);
+}
+
+async function refreshBookAgentGuide(controller: ManuscriptController): Promise<void> {
+  await controller.refreshBookAgentGuide();
 }
 
 async function renameVolume(controller: ManuscriptController, node: unknown): Promise<void> {
@@ -387,14 +558,6 @@ async function renameChapter(controller: ManuscriptController, node: unknown): P
   if (title !== undefined) {
     await controller.renameChapter(chapterId, title);
   }
-}
-
-async function deleteBook(controller: ManuscriptController, node: unknown): Promise<void> {
-  const bookId = isBookNode(node) ? node.id : await pickBook(controller);
-  if (!bookId) {
-    return;
-  }
-  await controller.deleteBook(bookId);
 }
 
 async function deleteVolume(controller: ManuscriptController, node: unknown): Promise<void> {
@@ -508,15 +671,6 @@ async function confirmDestructiveDelete(message: string): Promise<boolean> {
   return choice === "确认删除";
 }
 
-async function pickBook(controller: ManuscriptController): Promise<BookId | undefined> {
-  const books = await controller.listBooks();
-  const picked = await vscode.window.showQuickPick(
-    books.map((book) => ({ label: book.title, description: book.path, id: book.id })),
-    { title: "选择书籍" }
-  );
-  return picked?.id;
-}
-
 async function pickVolume(controller: ManuscriptController): Promise<VolumeId | undefined> {
   const volumes = await controller.listVolumes();
   const picked = await vscode.window.showQuickPick(
@@ -620,12 +774,35 @@ async function findExistingRelativePaths(workspaceRoot: string, relativePaths: s
   return existing;
 }
 
-function isNotFound(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.lstat(filePath);
+    return true;
+  } catch (error) {
+    if (isNotFound(error)) {
+      return false;
+    }
+    throw error;
+  }
 }
 
-function isBookNode(node: unknown): node is Extract<ManuscriptTreeNode, { kind: "book" }> {
-  return isTreeNode(node, "book");
+function normalizeBookFolderName(value: string): string {
+  const clean = value.trim();
+  if (
+    clean === "" ||
+    clean === "." ||
+    clean === ".." ||
+    clean.includes("/") ||
+    clean.includes("\\") ||
+    clean.includes("\0")
+  ) {
+    throw new Error("书名必须是可用的文件夹名，不能包含路径分隔符。");
+  }
+  return clean;
+}
+
+function isNotFound(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
 function isVolumeNode(node: unknown): node is Extract<ManuscriptTreeNode, { kind: "volume" }> {
@@ -664,10 +841,8 @@ function formatStatus(status: ManuscriptStatus): string {
   }
 }
 
-function formatTrashKind(kind: "book" | "volume" | "chapter"): string {
+function formatTrashKind(kind: "volume" | "chapter"): string {
   switch (kind) {
-    case "book":
-      return "书籍";
     case "volume":
       return "卷";
     case "chapter":
