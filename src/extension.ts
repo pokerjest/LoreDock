@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { exampleEmptyCapability } from "./capabilities/exampleEmptyCapability";
 import { manuscriptCapability } from "./capabilities/manuscript/capability";
 import { outlineScenesCapability } from "./capabilities/outlineScenes/capability";
+import { plotGridCapability } from "./capabilities/plotGrid/capability";
 import { storyBibleCapability } from "./capabilities/storyBible/capability";
 import { ProjectKernel } from "./kernel/projectKernel";
 
@@ -12,7 +13,8 @@ export function activate(context: vscode.ExtensionContext): void {
     exampleEmptyCapability,
     manuscriptCapability,
     storyBibleCapability,
-    outlineScenesCapability
+    outlineScenesCapability,
+    plotGridCapability
   ]);
   kernel.activate();
 }

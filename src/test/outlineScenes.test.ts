@@ -12,6 +12,7 @@ import { parseSceneText } from "../capabilities/outlineScenes/files";
 import { parseOutlineMarkdown, resolveOutlineMarkdown } from "../capabilities/outlineScenes/outlineParser";
 import { OutlineScenesTreeProvider, type OutlineScenesTreeNode } from "../capabilities/outlineScenes/tree";
 import { OUTLINE_SCENES_CAPABILITY_ID, SCENES_DIR } from "../capabilities/outlineScenes/types";
+import { PLOT_GRID_CAPABILITY_ID } from "../capabilities/plotGrid/types";
 import { createDefaultManifest } from "../kernel/manifest";
 import type { DiagnosticItem, OperationPlan } from "../kernel/types";
 
@@ -359,8 +360,14 @@ suite("Outline Scenes", function () {
       const outlinesGroup = rootNodes.find((node): node is Extract<OutlineScenesTreeNode, { kind: "group" }> =>
         node.kind === "group" && node.group === "outlines"
       );
+      const plotGridAction = rootNodes.find((node): node is Extract<OutlineScenesTreeNode, { kind: "action" }> =>
+        node.kind === "action" && node.command === "loredock.enablePlotGrid"
+      );
 
       assert.ok(skeletonGroup);
+      assert.ok(plotGridAction);
+      assert.equal(plotGridAction.title, "启用剧情矩阵");
+      assert.equal(tree.getTreeItem(plotGridAction).command?.command, "loredock.enablePlotGrid");
       assert.equal(rootNodes.some((node) => node.kind === "group" && node.title === "未落地规划"), false);
       assert.equal(tree.getTreeItem(skeletonGroup).description, "已落地");
       const skeletonNodes = await tree.getChildren(skeletonGroup);
@@ -380,7 +387,13 @@ suite("Outline Scenes", function () {
       assert.ok(chapterNode);
       assert.equal(chapterNode.id, chapterNode.chapterId);
       const chapterSceneNodes = await tree.getChildren(chapterNode);
-      assert.equal(chapterSceneNodes.some((node) => node.kind === "scene" && node.title === "屋顶谈判"), true);
+      const chapterSceneNode = chapterSceneNodes.find((node): node is Extract<OutlineScenesTreeNode, { kind: "scene" }> =>
+        node.kind === "scene" && node.title === "屋顶谈判"
+      );
+      assert.ok(chapterSceneNode);
+      const chapterSceneTreeItem = tree.getTreeItem(chapterSceneNode);
+      assert.equal(chapterSceneTreeItem.command?.command, "loredock.plotGrid.open");
+      assert.deepEqual(chapterSceneTreeItem.command?.arguments, [{ workspaceFolder, sceneId: chapterSceneNode.id }]);
 
       assert.ok(scenesGroup);
       const sceneNodes = await tree.getChildren(scenesGroup);
@@ -402,6 +415,15 @@ suite("Outline Scenes", function () {
       assert.equal(tree.getTreeItem(outlineNode).command?.command, "vscode.open");
       const outlineChildren = await tree.getChildren(outlineNode);
       assert.equal(outlineChildren.length, 0);
+
+      await writeProjectManifest(workspace, ["manuscript.core", OUTLINE_SCENES_CAPABILITY_ID, PLOT_GRID_CAPABILITY_ID]);
+      const plotGridEnabledNodes = await tree.getChildren();
+      const openPlotGridAction = plotGridEnabledNodes.find((node): node is Extract<OutlineScenesTreeNode, { kind: "action" }> =>
+        node.kind === "action" && node.command === "loredock.plotGrid.open"
+      );
+      assert.ok(openPlotGridAction);
+      assert.equal(openPlotGridAction.title, "打开剧情矩阵");
+      assert.equal(tree.getTreeItem(openPlotGridAction).command?.command, "loredock.plotGrid.open");
     } finally {
       readerRegistration.dispose();
     }
@@ -430,7 +452,7 @@ suite("Outline Scenes", function () {
       command.command === "loredock.outlineScenes.bindScenesToChapter"
     );
 
-    assert.equal(packageJson.version, "0.3.0");
+    assert.equal(packageJson.version, "0.4.0");
     assert.equal(packageJson.contributes.views.loredock.some((view: { id: string }) => view.id === "loredock.outlineScenes.tree"), true);
     assert.equal(packageJson.contributes.commands.some((command: { command: string }) => command.command === "loredock.enableOutlineScenes"), true);
     for (const command of [

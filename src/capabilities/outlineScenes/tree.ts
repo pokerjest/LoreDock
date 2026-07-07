@@ -2,6 +2,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import { inspectExistingWorkspacePath } from "../../kernel/safeWorkspacePath";
 import { MANIFEST_RELATIVE_PATH } from "../../kernel/types";
+import { isPlotGridCapabilityEnabled } from "../plotGrid/files";
 import { isOutlineScenesCapabilityEnabled, readOutlineScenes, type OutlineScenesReadResult } from "./files";
 import type {
   OutlineDocumentDto,
@@ -147,6 +148,11 @@ export class OutlineScenesTreeProvider implements vscode.TreeDataProvider<Outlin
           ? `${element.chapterTitle} · ${element.order} · ${element.status}`
           : `${element.order} · ${element.status}`;
         item.resourceUri = vscode.Uri.file(path.join(element.workspaceFolder.uri.fsPath, element.path));
+        item.command = {
+          command: "loredock.plotGrid.open",
+          title: "打开剧情矩阵",
+          arguments: [{ workspaceFolder: element.workspaceFolder, sceneId: element.id }]
+        };
         return item;
       }
       case "trashItem": {
@@ -213,8 +219,26 @@ export class OutlineScenesTreeProvider implements vscode.TreeDataProvider<Outlin
       title: item.message,
       description: item.relativePath
     }));
+    const plotGridEnabled = await isPlotGridCapabilityEnabled(workspaceFolder.uri.fsPath);
     return [
       ...diagnostics,
+      plotGridEnabled
+        ? {
+            kind: "action",
+            workspaceFolder,
+            title: "打开剧情矩阵",
+            description: "章节、场景和剧情线总览",
+            command: "loredock.plotGrid.open",
+            icon: "table"
+          }
+        : {
+            kind: "action",
+            workspaceFolder,
+            title: "启用剧情矩阵",
+            description: "创建 boards/plot-grid.json",
+            command: "loredock.enablePlotGrid",
+            icon: "add"
+          },
       { kind: "group", workspaceFolder, group: "skeleton", title: "结构骨架", description: "已落地" },
       { kind: "group", workspaceFolder, group: "scenes", title: "未绑定场景卡", description: "待安排" },
       { kind: "group", workspaceFolder, group: "outlines", title: "规划草稿", description: "导入源" }

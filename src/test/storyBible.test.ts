@@ -6,6 +6,7 @@ import * as vscode from "vscode";
 import { deriveCardDraftFromSelection } from "../capabilities/storyBible/capability";
 import { StoryBibleController } from "../capabilities/storyBible/controller";
 import { readStoryBible } from "../capabilities/storyBible/files";
+import { buildStoryBibleGalleryHtml } from "../capabilities/storyBible/galleryWebview";
 import { StoryBibleTreeProvider } from "../capabilities/storyBible/tree";
 import {
   LORE_DIR,
@@ -284,6 +285,13 @@ suite("Story Bible", function () {
     assert.equal(multiline.summary, "第一行名称 第二行是摘要信息");
     assert.equal(long.name.length <= 80, true);
     assert.equal(long.summary, "a".repeat(120));
+  });
+
+  test("story bible gallery prevents accidental page text selection", () => {
+    const html = buildStoryBibleGalleryHtml({ cspSource: "vscode-test" } as vscode.Webview, "test-nonce");
+
+    assert.match(html, /user-select: none/);
+    assert.match(html, /user-select: text/);
   });
 
   test("diagnoses damaged card frontmatter and duplicate primary keywords without hiding valid cards", async () => {
