@@ -2,11 +2,11 @@
 
 LoreDock 是一个运行在 VS Code 里的本地优先故事项目系统，面向长篇小说和复杂世界观项目。
 
-当前插件版本：**0.3.0**。
+当前插件版本：**0.4.0**。
 
-当前里程碑：**v0.3 Outline and Scene Cards**，建立在 **v0.2.1 Story Bible Fixes** 之上。
+当前里程碑：**v0.4 Plot Grid**，建立在 **v0.3 Outline and Scene Cards** 之上。
 
-这一版采用“一个 VS Code 工作区文件夹 = 一本书 = 一套故事圣经 = 一套结构骨架”的结构。项目内核负责 LoreDock 项目的初始化、清单、诊断、安全写入和 capability 生命周期；手稿能力管理当前书的卷、章节、笔记、状态、目标字数、统计和回收站；故事圣经能力管理当前书的 `lore/` 人物、地点、规则和关键词条目；结构规划能力管理 `outlines/` 大纲、`scenes/` 场景卡和可重建的 Structure Skeleton。
+这一版采用“一个 VS Code 工作区文件夹 = 一本书 = 一套故事圣经 = 一套结构骨架 = 一个剧情矩阵”的结构。项目内核负责 LoreDock 项目的初始化、清单、诊断、安全写入和 capability 生命周期；手稿能力管理当前书的卷、章节、笔记、状态、目标字数、统计和回收站；故事圣经能力管理当前书的 `lore/` 人物、地点、规则和关键词条目；结构规划能力管理 `outlines/` 大纲、`scenes/` 场景卡和可重建的 Structure Skeleton；剧情矩阵能力管理 `boards/plot-grid.json` 轨道配置和轻量 Webview。
 
 ## 当前实现
 
@@ -71,6 +71,18 @@ LoreDock 是一个运行在 VS Code 里的本地优先故事项目系统，面�
 - 支持创建、打开、编辑元数据、删除、还原和永久删除场景卡。
 - 场景卡删除先进入 `.loredock/trash/resources/outline-scenes/`，不会直接永久删除。
 
+### 剧情矩阵能力
+
+- `structure.plot-grid` capability 已接入项目清单。
+- 支持启用剧情矩阵，并创建 `boards/plot-grid.json`。
+- 使用轻量 Webview 显示章节、场景、剧情线、人物、地点、状态和字数。
+- 剧情线采用轻量轨道配置，轨道 ID 与场景卡 `plotlineRefs` 对齐；未配置但被场景引用的剧情线会以 inferred track 显示。
+- Webview 默认使用 scene-row 结构树视图；chapter-row 聚合模式已在 projection 和配置中支持，但当前界面不再暴露顶部切换按钮。
+- 支持筛选人物/地点/剧情线/状态、打开章节或场景卡源文件。
+- 轨道创建、更新、删除和排序已在 action 层接入；删除轨道不会删除场景卡里的 `plotlineRefs`，当前 Webview 还不是完整轨道管理器。
+- 支持从矩阵给单个场景追加或移除剧情线引用，并通过结构规划 actions 保存场景卡元数据。
+- 支持安全调用结构规划的同章节场景重排能力；Plot Grid 不拥有章节顺序 canon，当前 Webview 暂未提供拖拽重排入口。
+
 ## 项目文件
 
 初始化 LoreDock 项目只会创建：
@@ -122,6 +134,13 @@ outlines/
 scenes/
 ```
 
+启用剧情矩阵后会新增：
+
+```text
+boards/
+  plot-grid.json
+```
+
 删除项会先进入：
 
 ```text
@@ -133,7 +152,7 @@ scenes/
       outline-scenes/
 ```
 
-v0.3.0 不会创建索引、快照、导出、编译产物或远端 AI provider 配置目录。
+v0.4.0 不会创建索引、快照、时间线、导出、编译产物或远端 AI provider 配置目录。
 
 ## 命令
 
@@ -214,6 +233,11 @@ v0.3.0 不会创建索引、快照、导出、编译产物或远端 AI provider 
 - `LoreDock：刷新结构规划`
 - `LoreDock：切换结构规划资源垃圾桶`
 
+### 剧情矩阵命令
+
+- `LoreDock：启用剧情矩阵`
+- `LoreDock：打开剧情矩阵`
+
 ## 架构边界
 
 LoreDock 的核心原则是本地、透明、可审计、可扩展。
@@ -228,11 +252,11 @@ LoreDock 的核心原则是本地、透明、可审计、可扩展。
 
 ## 尚未包含
 
-`0.3.0` 仍然不包含：
+`0.4.0` 仍然不包含：
 
 - 自定义富文本手稿编辑器；章节目前是普通 Markdown 文件。
 - 势力、物品、事件等更细分 Story Bible 类型。
-- 拖拽式大纲板、剧情矩阵或时间线。
+- 完整轨道管理 UI、拖拽式大纲板、矩阵内拖拽重排、完整 Timeline 或跨章节视觉编排。
 - 引用索引、反向链接、实体图谱或一致性实验室。
 - 内置 AI assistant/provider 集成；当前只生成外置 AI 可读取的 agent 指南。
 - Compile/export、快照、版本对比或发布流程。
@@ -247,8 +271,8 @@ npm run compile
 npm test
 ```
 
-当前测试覆盖项目清单默认值与校验、项目修复、schema registry、migration no-op、安全写入边界、项目初始化、degraded mode、capability 路由、手稿结构操作、结构规划大纲/场景卡导入、手稿与结构规划诊断、安全路径处理、回收站恢复/永久删除和字数统计。
+当前测试覆盖项目清单默认值与校验、项目修复、schema registry、migration no-op、安全写入边界、项目初始化、degraded mode、capability 路由、手稿结构操作、结构规划大纲/场景卡导入、剧情矩阵配置/projection/actions、手稿与结构规划诊断、安全路径处理、回收站恢复/永久删除和字数统计。
 
 当前测试还覆盖故事圣经启用、重复启用、部分启用恢复、frontmatter 解析、对象主关键词、关键词目录、搜索、Webview 数据流、条目元数据编辑、主关键词修复、关键词定义删除同步、资源垃圾桶、损坏文件 degraded、章节引用校验和从选中文本创建。
 
-诊断信息在 `0.3.0` 仍不写入磁盘，只保存在内存中并输出到 LoreDock OutputChannel。
+诊断信息在 `0.4.0` 仍不写入磁盘，只保存在内存中并输出到 LoreDock OutputChannel。

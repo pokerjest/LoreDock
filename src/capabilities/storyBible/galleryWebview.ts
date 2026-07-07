@@ -174,6 +174,7 @@ export function buildStoryBibleGalleryHtml(webview: vscode.Webview, nonce: strin
       color: var(--text);
       font-family: var(--vscode-font-family);
       font-size: var(--vscode-font-size);
+      user-select: none;
     }
 
     button, input, select, textarea {
@@ -301,6 +302,7 @@ export function buildStoryBibleGalleryHtml(webview: vscode.Webview, nonce: strin
       border-radius: 6px;
       padding: 8px 10px;
       outline: none;
+      user-select: text;
     }
 
     .search:focus, .select:focus, .field input:focus, .field textarea:focus, .field select:focus {

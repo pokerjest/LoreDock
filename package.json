@@ -2,7 +2,7 @@
   "name": "loredock",
   "displayName": "LoreDock",
   "description": "面向 VS Code 的本地优先故事项目系统。",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "loredock",
   "license": "UNLICENSED",
   "engines": {
@@ -45,6 +45,8 @@
     "onCommand:loredock.outlineScenes.permanentlyDeleteTrashItem",
     "onCommand:loredock.outlineScenes.refreshTree",
     "onCommand:loredock.outlineScenes.toggleTrash",
+    "onCommand:loredock.enablePlotGrid",
+    "onCommand:loredock.plotGrid.open",
     "onView:loredock.manuscript.tree",
     "onView:loredock.storyBible.tree",
     "onView:loredock.outlineScenes.tree"
@@ -382,6 +384,16 @@
         "command": "loredock.outlineScenes.toggleTrash",
         "title": "LoreDock：切换结构规划资源垃圾桶",
         "icon": "$(trash)"
+      },
+      {
+        "command": "loredock.enablePlotGrid",
+        "title": "LoreDock：启用剧情矩阵",
+        "icon": "$(add)"
+      },
+      {
+        "command": "loredock.plotGrid.open",
+        "title": "LoreDock：打开剧情矩阵",
+        "icon": "$(table)"
       }
     ],
     "viewsContainers": {
@@ -514,6 +526,16 @@
           "command": "loredock.outlineScenes.refreshTree",
           "when": "view == loredock.outlineScenes.tree",
           "group": "navigation@4"
+        },
+        {
+          "command": "loredock.enablePlotGrid",
+          "when": "view == loredock.outlineScenes.tree && loredock.outlineScenes.active && !loredock.plotGrid.active",
+          "group": "navigation@5"
+        },
+        {
+          "command": "loredock.plotGrid.open",
+          "when": "view == loredock.outlineScenes.tree && loredock.plotGrid.active",
+          "group": "navigation@5"
         }
       ],
       "view/item/context": [
