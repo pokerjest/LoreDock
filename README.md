@@ -1,278 +1,218 @@
 # LoreDock
 
-LoreDock 是一个运行在 VS Code 里的本地优先故事项目系统，面向长篇小说和复杂世界观项目。
+LoreDock 是一款给小说作者使用的 VS Code 扩展。它把一本长篇小说整理成手稿、设定、场景和剧情线，适合写长篇、系列文、群像故事，或任何需要长期维护世界观的项目。
 
-当前插件版本：**0.4.0**。
+当前版本：**0.4.1**
 
-当前里程碑：**v0.4 Plot Grid**，建立在 **v0.3 Outline and Scene Cards** 之上。
+LoreDock 的重点不是把写作变复杂，而是让你在一个普通文件夹里安心保存所有内容：
 
-这一版采用“一个 VS Code 工作区文件夹 = 一本书 = 一套故事圣经 = 一套结构骨架 = 一个剧情矩阵”的结构。项目内核负责 LoreDock 项目的初始化、清单、诊断、安全写入和 capability 生命周期；手稿能力管理当前书的卷、章节、笔记、状态、目标字数、统计和回收站；故事圣经能力管理当前书的 `lore/` 人物、地点、规则和关键词条目；结构规划能力管理 `outlines/` 大纲、`scenes/` 场景卡和可重建的 Structure Skeleton；剧情矩阵能力管理 `boards/plot-grid.json` 轨道配置和轻量 Webview。
+- 章节是 Markdown 文件，可以直接编辑、备份和迁移。
+- 人物、地点、规则、场景卡都存在项目文件夹里。
+- 删除的卷、章节和卡片会先进入项目回收站。
+- 所有内容默认留在本地，不需要云端账号。
 
-## 当前实现
+## 适合谁
 
-### 项目内核
+LoreDock 适合这些写作者：
 
-- VS Code Extension + TypeScript 工程结构。
-- 以 workspace folder 作为 v0.x 阶段固定项目根目录。
-- `.loredock/project.json` 项目清单生命周期，项目清单 schema 当前为 `0.0.0`。
-- `LoreDock: Initialize Project` 使用 preview/apply operation plan 初始化项目。
-- manifest validation 支持字段类型检查、JSON 损坏检查、未知版本检查、capability 检查和 degraded mode。
-- `LoreDock: Repair Project Manifest` 会先备份损坏清单，再重建最小 v0.0 清单。
-- 诊断信息保存在内存中，并输出到 LoreDock OutputChannel。
-- `SafeFileWriter` 统一处理 workspace-relative 写入、同目录临时文件和 rename 替换。
-- 路径安全检查覆盖绝对路径、`..` 逃逸、未声明文件/目录、父级 symlink 逃逸和目标 symlink 逃逸。
-- SchemaRegistry 和 MigrationRunner 已有基础结构；v0.0 项目清单只跑 no-op migration。
-- Capability API 支持命令、视图、文件监听、schema、诊断、服务注册和可释放生命周期。
-- multi-root workspace 中通过显式 folder 选择路由命令。
+- 正在写长篇小说，需要管理卷、章、场景和设定。
+- 经常忘记人物设定、地点细节、剧情线进度。
+- 想用普通文件保存作品，而不是被锁进某个专用软件。
+- 已经在 VS Code 或 Markdown 里写作，希望多一些小说项目管理能力。
 
-### 手稿能力
+如果你只想写一篇短文，普通 Markdown 文件可能就够了；如果你正在写几十章、上百章的故事，LoreDock 会更有用。
 
-- `manuscript.core` capability 已接入项目清单。
-- LoreDock activity bar 中提供中文“手稿”树视图。
-- 支持启用手稿，并创建 `manuscript/manifest.json`、`notes.md`、初始卷、章节，以及根目录 `agent.system.md` 和 `agent.md`。
-- 当前工作区文件夹就是当前书；新建书籍等于选择或创建新的书文件夹，切换书籍等于打开另一个书文件夹。
-- 支持重命名书籍，并同步重命名外层文件夹。
-- 支持新建、重命名、删除卷/章节。
-- 支持章节跨卷移动、卷内排序、上移和下移。
-- 支持章节状态：`idea`、`outline`、`draft`、`revise`、`done`、`archived`。
-- 支持章节目标字数和基础字数统计。
-- 每本书生成 `agent.system.md` 和 `agent.md`；系统规则由插件启动同步，用户规则保留可编辑。
-- 手稿清单 schema 当前为 `0.2.0`。
-- 手稿诊断覆盖损坏引用、非法路径、缺失文件、孤立 Markdown、重复路径和 symlink 逃逸。
-- 删除卷或章节时先移入 `.loredock/trash/manuscript/`，支持还原和永久删除；删除整本书等于删除文件夹，不在插件内递归删除。
-- 内核不依赖手稿实现细节，手稿通过 Capability API 挂载。
+## 主要功能
 
-### 故事圣经能力
+### 手稿
 
-- `story-bible.core` capability 已接入项目清单。
-- LoreDock activity bar 中提供中文“故事圣经”树视图和条目库 Webview。
-- 支持人物、地点、规则卡片，内容位于当前书文件夹的 `lore/characters/`、`lore/locations/`、`lore/rules/`。
-- 支持普通关键词定义，内容位于 `lore/tags/`。
-- Story Bible Card schema 当前为 `0.2.0`，schema ID 为 `story-bible.element`。
-- 关键词定义 schema 当前为 `0.2.0`，schema ID 为 `story-bible.tag`。
-- `tags[0]` 是条目的对象主关键词；`tags[1...]` 是全局关联标签，可以跨人物、地点、规则自由引用。
-- 支持创建、打开、重命名、编辑元数据、删除、还原、永久删除故事圣经资源。
-- 支持从选中文本创建 Story Bible 条目，创建前走 preview/confirm/apply。
-- 支持删除关键词定义时同步从卡片中移除该 tag。
-- 支持修复错误对象主关键词、诊断 ISO 时间格式错误和重复主关键词。
-- 故事圣经条目库会隐藏 0 条目的分类统计，并复用单个 Webview 面板。
-- Story Bible 通过 service registry 暴露只读 reader 和受控 actions，供后续大纲、场景卡、知识图谱和 AI 能力复用。
+手稿用于管理小说正文。
 
-### 结构规划能力
+- 新建书籍项目、卷和章节。
+- 打开、重命名、移动、删除卷和章节。
+- 给章节设置状态：想法、提纲、草稿、修改、完成、归档。
+- 给章节设置目标字数。
+- 查看基础字数统计。
+- 维护一本书的笔记文件。
+- 删除卷或章节后，可以从回收站还原。
 
-- `structure.outline-scenes` capability 已接入项目清单。
-- LoreDock activity bar 中提供中文“结构规划”树视图。
-- 支持启用结构规划，并创建 `outlines/` 与 `scenes/`。
-- 支持新建带写法说明的 Markdown 规划草稿，草稿可声明 `@scope book|volume|chapter|scene`，也可用 `@include` 包含更小粒度草稿。
-- 支持从书籍、卷、章或场景粒度的大纲片段导入卷、章节和场景卡；导入时可选择复用已有卷/章或创建缺失父级，且必须先 preview。
-- 支持 Markdown + frontmatter 场景卡，字段包括稳定 `scene_...` ID、`chapterRefs` 多章节绑定、`order`、POV、人物/地点/剧情线引用、冲突、转折、结果和状态。
-- 支持 Structure Skeleton：从 Manuscript 卷章、场景卡和大纲草图重建 projection；主骨架显示卷章并内嵌绑定场景卡，未绑定场景卡单独兜底展示，规划草稿只作为轻量文件入口和导入来源。
-- 结构规划树里的卷/章可复用手稿命令打开、重命名、新建章节、移动或删除。
-- 支持创建、打开、编辑元数据、删除、还原和永久删除场景卡。
-- 场景卡删除先进入 `.loredock/trash/resources/outline-scenes/`，不会直接永久删除。
+### 故事圣经
 
-### 剧情矩阵能力
+故事圣经用于保存设定资料。
 
-- `structure.plot-grid` capability 已接入项目清单。
-- 支持启用剧情矩阵，并创建 `boards/plot-grid.json`。
-- 使用轻量 Webview 显示章节、场景、剧情线、人物、地点、状态和字数。
-- 剧情线采用轻量轨道配置，轨道 ID 与场景卡 `plotlineRefs` 对齐；未配置但被场景引用的剧情线会以 inferred track 显示。
-- Webview 默认使用 scene-row 结构树视图；chapter-row 聚合模式已在 projection 和配置中支持，但当前界面不再暴露顶部切换按钮。
-- 支持筛选人物/地点/剧情线/状态、打开章节或场景卡源文件。
-- 轨道创建、更新、删除和排序已在 action 层接入；删除轨道不会删除场景卡里的 `plotlineRefs`，当前 Webview 还不是完整轨道管理器。
-- 支持从矩阵给单个场景追加或移除剧情线引用，并通过结构规划 actions 保存场景卡元数据。
-- 支持安全调用结构规划的同章节场景重排能力；Plot Grid 不拥有章节顺序 canon，当前 Webview 暂未提供拖拽重排入口。
+- 创建人物、地点、规则卡片。
+- 给卡片添加关键词，方便搜索和关联。
+- 从选中的正文文字快速创建设定条目。
+- 搜索故事圣经内容。
+- 打开条目库，用更集中的界面浏览人物、地点和规则。
+- 删除设定条目后，可以从资源垃圾桶还原。
 
-## 项目文件
+### 结构规划
 
-初始化 LoreDock 项目只会创建：
+结构规划用于把大纲和场景卡接到手稿上。
 
-```text
-.loredock/
-  project.json
-```
+- 新建大纲草稿。
+- 从大纲导入卷、章节和场景卡。
+- 创建场景卡，并绑定到一个或多个章节。
+- 在结构树里查看卷、章和对应场景。
+- 打开、编辑、删除、还原场景卡。
 
-项目清单示例：
+### 剧情矩阵
 
-```json
-{
-  "schemaVersion": "0.0.0",
-  "projectId": "loredock_...",
-  "title": "My Novel",
-  "createdAt": "2026-06-29T00:00:00.000Z",
-  "updatedAt": "2026-06-29T00:00:00.000Z",
-  "capabilities": []
-}
-```
+剧情矩阵用于横向查看故事结构。
 
-启用手稿后，`capabilities` 会包含 `manuscript.core`，并新增：
+- 按章节和场景查看剧情安排。
+- 查看场景关联的人物、地点、剧情线、状态和字数。
+- 按人物、地点、剧情线或状态筛选。
+- 给场景追加或移除剧情线引用。
+- 打开相关章节或场景卡源文件。
 
-```text
-manuscript/
-  manifest.json
-  notes.md
-  volume-001/
-    chapter-001.md
-agent.system.md
-agent.md
-```
+当前剧情矩阵偏查看和轻量编辑，还不是完整的拖拽式白板。
 
-启用故事圣经后，`capabilities` 会包含 `story-bible.core`，并新增：
+## 安装
 
-```text
-lore/
-  characters/
-  locations/
-  rules/
-  tags/
-```
+如果你拿到的是 `.vsix` 安装包：
 
-启用结构规划后会新增：
+1. 打开 VS Code。
+2. 打开扩展面板。
+3. 在扩展面板右上角菜单选择 `Install from VSIX...`。
+4. 选择 `loredock-版本号.vsix`。
+5. 安装后重新加载 VS Code。
+
+如果你从 GitHub 下载：
+
+- 在 GitHub Actions 里找到 `Package VSIX` workflow。
+- 下载 `loredock-vsix` artifact。
+- 解压后用 VS Code 安装里面的 `.vsix` 文件。
+
+如果项目创建了 `v*` 版本标签，GitHub Release 里也会附带对应的 `.vsix` 安装包。
+
+## 快速开始
+
+1. 在 VS Code 中打开一个空文件夹，这个文件夹就是你的书籍项目。
+2. 打开命令面板：`Command Palette`。
+3. 运行 `LoreDock：初始化项目`。
+4. 在左侧 Activity Bar 打开 LoreDock。
+5. 根据需要依次启用：
+   - `LoreDock：启用手稿`
+   - `LoreDock：启用故事圣经`
+   - `LoreDock：启用结构规划`
+   - `LoreDock：启用剧情矩阵`
+6. 开始创建卷、章节、人物、地点、场景卡和剧情线。
+
+建议第一次使用时先启用“手稿”，写几章之后再逐步启用故事圣经、结构规划和剧情矩阵。
+
+## 一个常见写作流程
+
+1. 在“手稿”里新建卷和章节。
+2. 在章节 Markdown 文件里正常写正文。
+3. 写到重要人物、地点或规则时，把它们加入“故事圣经”。
+4. 为接下来的剧情写一个大纲草稿。
+5. 从大纲生成场景卡，或手动创建场景卡。
+6. 打开“剧情矩阵”，检查人物、地点和剧情线是否分布合理。
+7. 写作过程中随时调整章节状态和目标字数。
+
+你不需要一次把所有资料填完。LoreDock 更适合随着写作慢慢补全项目。
+
+## 项目文件放在哪里
+
+LoreDock 会在当前工作区文件夹里保存内容。常见结构如下：
 
 ```text
-outlines/
-scenes/
+你的小说文件夹/
+  .loredock/
+    project.json
+    trash/
+  manuscript/
+    manifest.json
+    notes.md
+    volume-001/
+      chapter-001.md
+  lore/
+    characters/
+    locations/
+    rules/
+    tags/
+  outlines/
+  scenes/
+  boards/
+    plot-grid.json
+  agent.system.md
+  agent.md
 ```
 
-启用剧情矩阵后会新增：
+你最常编辑的是这些内容：
 
-```text
-boards/
-  plot-grid.json
-```
+- `manuscript/`：正文、卷、章节和笔记。
+- `lore/`：人物、地点、规则和关键词。
+- `outlines/`：大纲草稿。
+- `scenes/`：场景卡。
+- `boards/plot-grid.json`：剧情矩阵配置。
 
-删除项会先进入：
+`.loredock/` 是项目管理文件夹，通常不需要手动修改。
 
-```text
-.loredock/
-  trash/
-    manuscript/
-    resources/
-      story-bible/
-      outline-scenes/
-```
+## 数据和安全
 
-v0.4.0 不会创建索引、快照、时间线、导出、编译产物或远端 AI provider 配置目录。
+- LoreDock 使用本地文件保存项目。
+- 正文和大部分写作资料都是 Markdown。
+- 配置和索引类信息使用 JSON。
+- 删除卷、章节、设定条目和场景卡时，会尽量先放入项目回收站。
+- 建议你仍然使用 Git、Time Machine、云盘或其他方式备份小说文件夹。
 
-## 命令
+## AI 辅助写作
 
-### 项目命令
+启用手稿后，LoreDock 会在项目根目录生成：
+
+- `agent.system.md`
+- `agent.md`
+
+这两个文件用于给外部 AI 工具阅读你的项目规则和写作约定。LoreDock 当前不会内置连接任何 AI provider，也不会自动把你的内容发送到远端。
+
+## 当前限制
+
+当前版本还没有这些功能：
+
+- 内置富文本手稿编辑器；章节仍然是 Markdown 文件。
+- 完整时间线、实体关系图或一致性检查实验室。
+- 完整拖拽式大纲白板或剧情矩阵拖拽重排。
+- 编译、导出、快照、版本对比或发布流程。
+- 内置 AI provider 集成。
+
+这些方向会在后续版本继续规划。路线图见 [docs/ROADMAP.md](docs/ROADMAP.md) 和 [docs/versions/](docs/versions/)。
+
+## 常用命令
+
+你可以在 VS Code 命令面板中搜索 `LoreDock`。
+
+最常用的命令包括：
 
 - `LoreDock：初始化项目`
-- `LoreDock：打开项目清单`
-- `LoreDock：显示诊断`
-- `LoreDock：修复项目清单`
-
-### 手稿命令
-
 - `LoreDock：启用手稿`
 - `LoreDock：新建书籍项目`
 - `LoreDock：切换书籍`
 - `LoreDock：新建卷`
 - `LoreDock：新建章节`
-- `LoreDock：打开章节`
-- `LoreDock：重命名书籍`
-- `LoreDock：刷新书籍 AI 指南`
-- `LoreDock：重命名卷`
-- `LoreDock：重命名章节`
-- `LoreDock：移动章节`
-- `LoreDock：上移章节`
-- `LoreDock：下移章节`
-- `LoreDock：删除卷`
-- `LoreDock：删除章节`
-- `LoreDock：还原回收站项目`
-- `LoreDock：永久删除回收站项目`
-- `LoreDock：设置章节状态`
-- `LoreDock：设置章节目标字数`
-- `LoreDock：刷新手稿`
-- `LoreDock：切换回收站`
-- `LoreDock：打开笔记`
 - `LoreDock：手稿统计`
-
-### 故事圣经命令
-
 - `LoreDock：启用故事圣经`
 - `LoreDock：打开故事圣经条目库`
 - `LoreDock：新建故事圣经条目`
-- `LoreDock：新建人物`
-- `LoreDock：新建地点`
-- `LoreDock：新建规则`
-- `LoreDock：打开/编辑条目`
-- `LoreDock：重命名条目`
-- `LoreDock：编辑条目元数据`
-- `LoreDock：修复条目主关键词`
-- `LoreDock：删除条目`
 - `LoreDock：搜索故事圣经`
-- `LoreDock：从选中文本创建条目`
-- `LoreDock：浏览关键词`
-- `LoreDock：定义关键词`
-- `LoreDock：打开关键词定义`
-- `LoreDock：编辑关键词定义`
-- `LoreDock：删除关键词定义`
-- `LoreDock：还原资源垃圾桶项目`
-- `LoreDock：永久删除资源垃圾桶项目`
-- `LoreDock：刷新故事圣经`
-- `LoreDock：切换故事圣经资源垃圾桶`
-
-### 结构规划命令
-
 - `LoreDock：启用结构规划`
 - `LoreDock：新建规划草稿`
-- `LoreDock：删除规划草稿`
 - `LoreDock：预览导入大纲到结构骨架`
 - `LoreDock：新建场景卡`
-- `LoreDock：新建场景卡并绑定此章节`
-- `LoreDock：绑定已有场景卡到此章节`
-- `LoreDock：绑定现有章节`
-- `LoreDock：新建章节并绑定`
-- `LoreDock：打开场景卡`
-- `LoreDock：编辑场景卡元数据`
-- `LoreDock：删除场景卡`
-- `LoreDock：还原结构规划资源`
-- `LoreDock：永久删除结构规划资源`
-- `LoreDock：刷新结构规划`
-- `LoreDock：切换结构规划资源垃圾桶`
-
-### 剧情矩阵命令
-
 - `LoreDock：启用剧情矩阵`
 - `LoreDock：打开剧情矩阵`
 
-## 架构边界
+## 给开发者
 
-LoreDock 的核心原则是本地、透明、可审计、可扩展。
-
-- Kernel 只负责 workspace、manifest、schema、迁移入口、命令注册、诊断、安全写入和 preview/apply。
-- Feature capability 只能通过公开 API 挂载，不直接依赖 Kernel 私有实现。
-- Capability 之间只能通过 service registry 暴露的公开 reader/actions/events 协作，不能直接读取其他模块私有缓存。
-- 用户内容优先使用 Markdown，清单和索引用 JSON。
-- 项目数据中的路径必须是 workspace-relative path。
-- 所有复杂写入都必须先声明 operation plan，再执行 apply。
-- v1.0 之前允许为了干净架构调整存储结构；v1.0 之后才进入正式兼容期。
-
-## 尚未包含
-
-`0.4.0` 仍然不包含：
-
-- 自定义富文本手稿编辑器；章节目前是普通 Markdown 文件。
-- 势力、物品、事件等更细分 Story Bible 类型。
-- 完整轨道管理 UI、拖拽式大纲板、矩阵内拖拽重排、完整 Timeline 或跨章节视觉编排。
-- 引用索引、反向链接、实体图谱或一致性实验室。
-- 内置 AI assistant/provider 集成；当前只生成外置 AI 可读取的 agent 指南。
-- Compile/export、快照、版本对比或发布流程。
-
-后续路线见 [`docs/ROADMAP.md`](docs/ROADMAP.md) 和 [`docs/versions/`](docs/versions/)。
-
-## 开发
+如果你想从源码运行或打包：
 
 ```sh
 npm install
 npm run compile
 npm test
+npm run package:vsix
 ```
 
-当前测试覆盖项目清单默认值与校验、项目修复、schema registry、migration no-op、安全写入边界、项目初始化、degraded mode、capability 路由、手稿结构操作、结构规划大纲/场景卡导入、剧情矩阵配置/projection/actions、手稿与结构规划诊断、安全路径处理、回收站恢复/永久删除和字数统计。
-
-当前测试还覆盖故事圣经启用、重复启用、部分启用恢复、frontmatter 解析、对象主关键词、关键词目录、搜索、Webview 数据流、条目元数据编辑、主关键词修复、关键词定义删除同步、资源垃圾桶、损坏文件 degraded、章节引用校验和从选中文本创建。
-
-诊断信息在 `0.4.0` 仍不写入磁盘，只保存在内存中并输出到 LoreDock OutputChannel。
+打包成功后，安装包会生成在 `dist/` 目录中。
