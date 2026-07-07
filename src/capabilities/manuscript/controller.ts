@@ -37,6 +37,9 @@ import {
   type ManuscriptChapter,
   type ManuscriptChapterDto,
   type ManuscriptManifest,
+  type ManuscriptOutlineVolumeInput,
+  type ManuscriptPreparedChapter,
+  type ManuscriptPreparedStructure,
   type ManuscriptReader,
   type ManuscriptReadResult,
   type ManuscriptService,
@@ -426,6 +429,159 @@ export class ManuscriptController implements ManuscriptReader, ManuscriptActions
       { type: "structure", volumeId, chapterId },
       { type: "metadata", volumeId, chapterId }
     ]);
+  }
+
+  public async prepareStructureFromOutline(
+    volumes: ManuscriptOutlineVolumeInput[]
+  ): Promise<ManuscriptPreparedStructure> {
+    const manifest = await this.loadManifest();
+    const originalManifestText = stringifyManuscriptManifest(manifest);
+    const next = cloneManifest(manifest);
+    const timestamp = this.timestamp();
+    const directoriesToCreate: string[] = [];
+    const filesToCreate: string[] = [];
+    const chapterIdsByClientId: Record<string, ChapterId> = {};
+    const events: Partial<ManuscriptChangeEvent>[] = [];
+    let changed = false;
+
+    for (const inputVolume of volumes) {
+      const cleanVolumeTitle = assertNonEmptyTitle(inputVolume.title);
+      let volumeId = inputVolume.existingVolumeId;
+      let volumePath: string;
+      if (volumeId) {
+        const existingVolume = requireVolume(next, volumeId);
+        volumePath = existingVolume.path;
+      } else {
+        const firstExistingChapterId = inputVolume.chapters.find((chapter) => chapter.existingChapterId)?.existingChapterId;
+        if (firstExistingChapterId && inputVolume.chapters.every((chapter) => chapter.existingChapterId)) {
+          volumeId = requireChapter(next, firstExistingChapterId).volumeId;
+          volumePath = requireVolume(next, volumeId).path;
+        } else {
+          volumeId = createVolumeId();
+          volumePath = await this.allocateVolumePath(next);
+          directoriesToCreate.push(volumePath);
+          next.volumeIds.push(volumeId);
+          next.volumes[volumeId] = {
+            id: volumeId,
+            title: cleanVolumeTitle,
+            path: volumePath,
+            chapterIds: [],
+            nextChapterNumber: 1
+          };
+          changed = true;
+          events.push({ type: "structure", bookId: next.book.id, volumeId });
+        }
+      }
+
+      for (const inputChapter of inputVolume.chapters) {
+        if (inputChapter.existingChapterId) {
+          const existingChapter = requireChapter(next, inputChapter.existingChapterId);
+          if (existingChapter.volumeId !== volumeId) {
+            throw new Error(`章节 "${inputChapter.existingChapterId}" 不属于目标卷。`);
+          }
+          chapterIdsByClientId[inputChapter.clientId] = inputChapter.existingChapterId;
+          continue;
+        }
+
+        const cleanChapterTitle = assertNonEmptyTitle(inputChapter.title);
+        const number = next.volumes[volumeId].nextChapterNumber;
+        const chapterId = createChapterId();
+        const chapterPath = `${volumePath}/${formatNumberedName("chapter", number)}.md`;
+        next.volumes[volumeId].nextChapterNumber = number + 1;
+        next.volumes[volumeId].chapterIds.push(chapterId);
+        next.chapters[chapterId] = {
+          id: chapterId,
+          volumeId,
+          title: cleanChapterTitle,
+          status: "outline",
+          path: chapterPath,
+          createdAt: timestamp,
+          updatedAt: timestamp
+        };
+        chapterIdsByClientId[inputChapter.clientId] = chapterId;
+        filesToCreate.push(chapterPath);
+        changed = true;
+        events.push({ type: "structure", volumeId, chapterId });
+        events.push({ type: "metadata", volumeId, chapterId });
+      }
+    }
+
+    if (changed) {
+      next.updatedAt = timestamp;
+    }
+    const plan = changed
+      ? manifestPlan("从大纲生成手稿卷章结构。", directoriesToCreate, filesToCreate)
+      : noOpPlan("复用现有手稿卷章结构。");
+
+    return {
+      plan,
+      chapterIdsByClientId,
+      apply: async (writer) => {
+        const currentManifestText = await fs.readFile(path.join(this.workspaceRoot, MANUSCRIPT_MANIFEST_PATH), "utf8");
+        if (currentManifestText !== originalManifestText) {
+          throw new Error("手稿清单已变化，请重新预览大纲导入。");
+        }
+        if (!changed) {
+          return;
+        }
+
+        for (const directory of directoriesToCreate) {
+          await writer.ensureDirectory(directory);
+        }
+        for (const chapterPath of filesToCreate) {
+          const chapter = Object.values(next.chapters).find((candidate) => candidate.path === chapterPath);
+          await writer.writeFile(chapterPath, `# ${chapter?.title ?? "未命名章节"}\n\n`);
+        }
+        await writer.writeFile(MANUSCRIPT_MANIFEST_PATH, stringifyManuscriptManifest(next));
+        for (const event of events) {
+          this.emit(event.type ?? "structure", event);
+        }
+        await this.refreshDiagnostics();
+      }
+    };
+  }
+
+  public async prepareChapterInVolume(volumeId: VolumeId, title: string): Promise<ManuscriptPreparedChapter> {
+    const manifest = await this.loadManifest();
+    const originalManifestText = stringifyManuscriptManifest(manifest);
+    const next = cloneManifest(manifest);
+    const volume = requireVolume(next, volumeId);
+    const cleanTitle = assertNonEmptyTitle(title);
+    const number = volume.nextChapterNumber;
+    const chapterId = createChapterId();
+    const chapterPath = `${volume.path}/${formatNumberedName("chapter", number)}.md`;
+    const timestamp = this.timestamp();
+
+    volume.nextChapterNumber = number + 1;
+    volume.chapterIds.push(chapterId);
+    next.chapters[chapterId] = {
+      id: chapterId,
+      volumeId,
+      title: cleanTitle,
+      status: "outline",
+      path: chapterPath,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    next.updatedAt = timestamp;
+
+    const plan = manifestPlan(`新建章节“${cleanTitle}”。`, [], [chapterPath]);
+    return {
+      plan,
+      chapterId,
+      apply: async (writer) => {
+        const currentManifestText = await fs.readFile(path.join(this.workspaceRoot, MANUSCRIPT_MANIFEST_PATH), "utf8");
+        if (currentManifestText !== originalManifestText) {
+          throw new Error("手稿清单已变化，请重新预览章节创建。");
+        }
+
+        await writer.writeFile(chapterPath, `# ${cleanTitle}\n\n`);
+        await writer.writeFile(MANUSCRIPT_MANIFEST_PATH, stringifyManuscriptManifest(next));
+        this.emit("structure", { volumeId, chapterId });
+        this.emit("metadata", { volumeId, chapterId });
+        await this.refreshDiagnostics();
+      }
+    };
   }
 
   public async renameBook(title: string): Promise<ManuscriptActionResult> {

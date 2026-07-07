@@ -1,4 +1,5 @@
 import type * as vscode from "vscode";
+import type { SafeFileWriter } from "../../kernel/safeFileWriter";
 import type { OperationPlan } from "../../kernel/types";
 
 export const MANUSCRIPT_CAPABILITY_ID = "manuscript.core";
@@ -130,6 +131,30 @@ export interface ManuscriptActionResult {
   plan: OperationPlan;
 }
 
+export interface ManuscriptOutlineChapterInput {
+  clientId: string;
+  title: string;
+  existingChapterId?: ChapterId;
+}
+
+export interface ManuscriptOutlineVolumeInput {
+  title: string;
+  existingVolumeId?: VolumeId;
+  chapters: ManuscriptOutlineChapterInput[];
+}
+
+export interface ManuscriptPreparedStructure {
+  plan: OperationPlan;
+  chapterIdsByClientId: Record<string, ChapterId>;
+  apply(writer: SafeFileWriter): Promise<void>;
+}
+
+export interface ManuscriptPreparedChapter {
+  plan: OperationPlan;
+  chapterId: ChapterId;
+  apply(writer: SafeFileWriter): Promise<void>;
+}
+
 export interface ManuscriptReader {
   getBook(): Promise<ManuscriptBookDto>;
   listVolumes(): Promise<ManuscriptVolumeDto[]>;
@@ -154,6 +179,8 @@ export interface ManuscriptActions {
   permanentlyDeleteTrashItem(trashItemId: TrashItemId): Promise<ManuscriptActionResult>;
   setChapterStatus(chapterId: ChapterId, status: ManuscriptStatus): Promise<ManuscriptActionResult>;
   setChapterTargetWordCount(chapterId: ChapterId, targetWordCount?: number): Promise<ManuscriptActionResult>;
+  prepareStructureFromOutline(volumes: ManuscriptOutlineVolumeInput[]): Promise<ManuscriptPreparedStructure>;
+  prepareChapterInVolume(volumeId: VolumeId, title: string): Promise<ManuscriptPreparedChapter>;
 }
 
 export interface ManuscriptService {

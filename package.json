@@ -2,7 +2,7 @@
   "name": "loredock",
   "displayName": "LoreDock",
   "description": "面向 VS Code 的本地优先故事项目系统。",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "publisher": "loredock",
   "license": "UNLICENSED",
   "engines": {
@@ -29,8 +29,25 @@
     "onCommand:loredock.storyBible.createCard",
     "onCommand:loredock.storyBible.searchCards",
     "onCommand:loredock.storyBible.defineKeyword",
+    "onCommand:loredock.enableOutlineScenes",
+    "onCommand:loredock.outlineScenes.createOutline",
+    "onCommand:loredock.outlineScenes.deleteOutline",
+    "onCommand:loredock.outlineScenes.importOutline",
+    "onCommand:loredock.outlineScenes.createSceneCard",
+    "onCommand:loredock.outlineScenes.createSceneCardFromChapter",
+    "onCommand:loredock.outlineScenes.bindScenesToChapter",
+    "onCommand:loredock.outlineScenes.bindSceneToChapters",
+    "onCommand:loredock.outlineScenes.createChapterAndBindScene",
+    "onCommand:loredock.outlineScenes.openSceneCard",
+    "onCommand:loredock.outlineScenes.editSceneMetadata",
+    "onCommand:loredock.outlineScenes.deleteSceneCard",
+    "onCommand:loredock.outlineScenes.restoreTrashItem",
+    "onCommand:loredock.outlineScenes.permanentlyDeleteTrashItem",
+    "onCommand:loredock.outlineScenes.refreshTree",
+    "onCommand:loredock.outlineScenes.toggleTrash",
     "onView:loredock.manuscript.tree",
-    "onView:loredock.storyBible.tree"
+    "onView:loredock.storyBible.tree",
+    "onView:loredock.outlineScenes.tree"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -106,11 +123,13 @@
       },
       {
         "command": "loredock.manuscript.renameVolume",
-        "title": "LoreDock：重命名卷"
+        "title": "LoreDock：重命名卷",
+        "icon": "$(edit)"
       },
       {
         "command": "loredock.manuscript.renameChapter",
-        "title": "LoreDock：重命名章节"
+        "title": "LoreDock：重命名章节",
+        "icon": "$(edit)"
       },
       {
         "command": "loredock.manuscript.moveChapter",
@@ -128,11 +147,13 @@
       },
       {
         "command": "loredock.manuscript.deleteVolume",
-        "title": "LoreDock：删除卷"
+        "title": "LoreDock：删除卷",
+        "icon": "$(trash)"
       },
       {
         "command": "loredock.manuscript.deleteChapter",
-        "title": "LoreDock：删除章节"
+        "title": "LoreDock：删除章节",
+        "icon": "$(trash)"
       },
       {
         "command": "loredock.manuscript.restoreTrashItem",
@@ -281,6 +302,86 @@
         "command": "loredock.storyBible.toggleTrash",
         "title": "LoreDock：切换故事圣经资源垃圾桶",
         "icon": "$(trash)"
+      },
+      {
+        "command": "loredock.enableOutlineScenes",
+        "title": "LoreDock：启用结构规划",
+        "icon": "$(add)"
+      },
+      {
+        "command": "loredock.outlineScenes.createOutline",
+        "title": "LoreDock：新建规划草稿",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "loredock.outlineScenes.deleteOutline",
+        "title": "LoreDock：删除规划草稿",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "loredock.outlineScenes.importOutline",
+        "title": "LoreDock：预览导入大纲到结构骨架",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "loredock.outlineScenes.createSceneCard",
+        "title": "LoreDock：新建场景卡",
+        "icon": "$(symbol-event)"
+      },
+      {
+        "command": "loredock.outlineScenes.createSceneCardFromChapter",
+        "title": "LoreDock：新建场景卡并绑定此章节",
+        "icon": "$(link)"
+      },
+      {
+        "command": "loredock.outlineScenes.bindScenesToChapter",
+        "title": "LoreDock：绑定已有场景卡到此章节",
+        "icon": "$(link)"
+      },
+      {
+        "command": "loredock.outlineScenes.bindSceneToChapters",
+        "title": "LoreDock：绑定现有章节",
+        "icon": "$(link)"
+      },
+      {
+        "command": "loredock.outlineScenes.createChapterAndBindScene",
+        "title": "LoreDock：新建章节并绑定",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "loredock.outlineScenes.openSceneCard",
+        "title": "LoreDock：打开场景卡",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "loredock.outlineScenes.editSceneMetadata",
+        "title": "LoreDock：编辑场景卡元数据",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "loredock.outlineScenes.deleteSceneCard",
+        "title": "LoreDock：删除场景卡",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "loredock.outlineScenes.restoreTrashItem",
+        "title": "LoreDock：还原结构规划资源",
+        "icon": "$(history)"
+      },
+      {
+        "command": "loredock.outlineScenes.permanentlyDeleteTrashItem",
+        "title": "LoreDock：永久删除结构规划资源",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "loredock.outlineScenes.refreshTree",
+        "title": "LoreDock：刷新结构规划",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "loredock.outlineScenes.toggleTrash",
+        "title": "LoreDock：切换结构规划资源垃圾桶",
+        "icon": "$(trash)"
       }
     ],
     "viewsContainers": {
@@ -305,6 +406,10 @@
         {
           "id": "loredock.storyBible.tree",
           "name": "故事圣经"
+        },
+        {
+          "id": "loredock.outlineScenes.tree",
+          "name": "结构规划"
         }
       ]
     },
@@ -384,6 +489,31 @@
           "command": "loredock.storyBible.refreshTree",
           "when": "view == loredock.storyBible.tree",
           "group": "navigation"
+        },
+        {
+          "command": "loredock.enableOutlineScenes",
+          "when": "view == loredock.outlineScenes.tree && !loredock.outlineScenes.active",
+          "group": "navigation"
+        },
+        {
+          "command": "loredock.outlineScenes.createOutline",
+          "when": "view == loredock.outlineScenes.tree && loredock.outlineScenes.active && !loredock.outlineScenes.trashMode",
+          "group": "navigation@1"
+        },
+        {
+          "command": "loredock.outlineScenes.importOutline",
+          "when": "view == loredock.outlineScenes.tree && loredock.outlineScenes.active && !loredock.outlineScenes.trashMode",
+          "group": "navigation@2"
+        },
+        {
+          "command": "loredock.outlineScenes.toggleTrash",
+          "when": "view == loredock.outlineScenes.tree && loredock.outlineScenes.active",
+          "group": "navigation@3"
+        },
+        {
+          "command": "loredock.outlineScenes.refreshTree",
+          "when": "view == loredock.outlineScenes.tree",
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [
@@ -538,6 +668,96 @@
         {
           "command": "loredock.storyBible.permanentlyDeleteTrashItem",
           "when": "view == loredock.storyBible.tree && viewItem == loredock.storyBible.trashItem",
+          "group": "inline@1"
+        },
+        {
+          "command": "loredock.outlineScenes.importOutline",
+          "when": "view == loredock.outlineScenes.tree && viewItem == loredock.outlineScenes.outline",
+          "group": "inline"
+        },
+        {
+          "command": "loredock.outlineScenes.deleteOutline",
+          "when": "view == loredock.outlineScenes.tree && viewItem == loredock.outlineScenes.outline",
+          "group": "inline@1"
+        },
+        {
+          "command": "loredock.outlineScenes.createOutline",
+          "when": "view == loredock.outlineScenes.tree && viewItem == loredock.outlineScenes.group.outlines",
+          "group": "inline"
+        },
+        {
+          "command": "loredock.outlineScenes.createSceneCard",
+          "when": "view == loredock.outlineScenes.tree && viewItem == loredock.outlineScenes.group.scenes",
+          "group": "inline"
+        },
+        {
+          "command": "loredock.manuscript.createChapter",
+          "when": "view == loredock.outlineScenes.tree && viewItem == loredock.outlineScenes.volume",
+          "group": "inline"
+        },
+        {
+          "command": "loredock.manuscript.renameVolume",
+          "when": "view == loredock.outlineScenes.tree && viewItem == loredock.outlineScenes.volume"
+        },
+        {
+          "command": "loredock.manuscript.deleteVolume",
+          "when": "view == loredock.outlineScenes.tree && viewItem == loredock.outlineScenes.volume"
+        },
+        {
+          "command": "loredock.manuscript.openChapter",
+          "when": "view == loredock.outlineScenes.tree && viewItem == loredock.outlineScenes.chapter",
+          "group": "inline@1"
+        },
+        {
+          "command": "loredock.outlineScenes.bindScenesToChapter",
+          "when": "view == loredock.outlineScenes.tree && viewItem == loredock.outlineScenes.chapter",
+          "group": "inline@2"
+        },
+        {
+          "command": "loredock.outlineScenes.createSceneCardFromChapter",
+          "when": "view == loredock.outlineScenes.tree && viewItem == loredock.outlineScenes.chapter"
+        },
+        {
+          "command": "loredock.manuscript.renameChapter",
+          "when": "view == loredock.outlineScenes.tree && viewItem == loredock.outlineScenes.chapter"
+        },
+        {
+          "command": "loredock.manuscript.moveChapter",
+          "when": "view == loredock.outlineScenes.tree && viewItem == loredock.outlineScenes.chapter"
+        },
+        {
+          "command": "loredock.manuscript.deleteChapter",
+          "when": "view == loredock.outlineScenes.tree && viewItem == loredock.outlineScenes.chapter"
+        },
+        {
+          "command": "loredock.outlineScenes.openSceneCard",
+          "when": "view == loredock.outlineScenes.tree && viewItem == loredock.outlineScenes.scene",
+          "group": "inline"
+        },
+        {
+          "command": "loredock.outlineScenes.bindSceneToChapters",
+          "when": "view == loredock.outlineScenes.tree && viewItem == loredock.outlineScenes.scene"
+        },
+        {
+          "command": "loredock.outlineScenes.createChapterAndBindScene",
+          "when": "view == loredock.outlineScenes.tree && viewItem == loredock.outlineScenes.scene"
+        },
+        {
+          "command": "loredock.outlineScenes.editSceneMetadata",
+          "when": "view == loredock.outlineScenes.tree && viewItem == loredock.outlineScenes.scene"
+        },
+        {
+          "command": "loredock.outlineScenes.deleteSceneCard",
+          "when": "view == loredock.outlineScenes.tree && viewItem == loredock.outlineScenes.scene"
+        },
+        {
+          "command": "loredock.outlineScenes.restoreTrashItem",
+          "when": "view == loredock.outlineScenes.tree && viewItem == loredock.outlineScenes.trashItem",
+          "group": "inline"
+        },
+        {
+          "command": "loredock.outlineScenes.permanentlyDeleteTrashItem",
+          "when": "view == loredock.outlineScenes.tree && viewItem == loredock.outlineScenes.trashItem",
           "group": "inline@1"
         }
       ]
