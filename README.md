@@ -2,11 +2,11 @@
 
 LoreDock 是一个运行在 VS Code 里的本地优先故事项目系统，面向长篇小说和复杂世界观项目。
 
-当前插件版本：**0.2.1**。
+当前插件版本：**0.3.0**。
 
-当前里程碑：**v0.2.1 Story Bible Fixes**，建立在 **v0.2 Story Bible Core** 之上。
+当前里程碑：**v0.3 Outline and Scene Cards**，建立在 **v0.2.1 Story Bible Fixes** 之上。
 
-这一版采用“一个 VS Code 工作区文件夹 = 一本书 = 一套故事圣经”的结构。项目内核负责 LoreDock 项目的初始化、清单、诊断、安全写入和 capability 生命周期；手稿能力管理当前书的卷、章节、笔记、状态、目标字数、统计和回收站；故事圣经能力管理当前书的 `lore/` 人物、地点、规则和关键词条目。
+这一版采用“一个 VS Code 工作区文件夹 = 一本书 = 一套故事圣经 = 一套结构骨架”的结构。项目内核负责 LoreDock 项目的初始化、清单、诊断、安全写入和 capability 生命周期；手稿能力管理当前书的卷、章节、笔记、状态、目标字数、统计和回收站；故事圣经能力管理当前书的 `lore/` 人物、地点、规则和关键词条目；结构规划能力管理 `outlines/` 大纲、`scenes/` 场景卡和可重建的 Structure Skeleton。
 
 ## 当前实现
 
@@ -54,6 +54,19 @@ LoreDock 是一个运行在 VS Code 里的本地优先故事项目系统，面�
 - 支持修复错误对象主关键词、诊断 ISO 时间格式错误和重复主关键词。
 - 故事圣经条目库会隐藏 0 条目的分类统计，并复用单个 Webview 面板。
 
+### 结构规划能力
+
+- `structure.outline-scenes` capability 已接入项目清单。
+- LoreDock activity bar 中提供中文“结构规划”树视图。
+- 支持启用结构规划，并创建 `outlines/` 与 `scenes/`。
+- 支持新建带写法说明的 Markdown 规划草稿，草稿可声明 `@scope book|volume|chapter|scene`，也可用 `@include` 包含更小粒度草稿。
+- 支持从书籍、卷、章或场景粒度的大纲片段导入卷、章节和场景卡；导入时可选择复用已有卷/章或创建缺失父级，且必须先 preview。
+- 支持 Markdown + frontmatter 场景卡，字段包括稳定 `scene_...` ID、`chapterRefs` 多章节绑定、`order`、POV、人物/地点/剧情线引用、冲突、转折、结果和状态。
+- 支持 Structure Skeleton：从 Manuscript 卷章、场景卡和大纲草图重建 projection；主骨架显示卷章并内嵌绑定场景卡，未绑定场景卡单独兜底展示，规划草稿只作为轻量文件入口和导入来源。
+- 结构规划树里的卷/章可复用手稿命令打开、重命名、新建章节、移动或删除。
+- 支持创建、打开、编辑元数据、删除、还原和永久删除场景卡。
+- 场景卡删除先进入 `.loredock/trash/resources/outline-scenes/`，不会直接永久删除。
+
 ## 项目文件
 
 初始化 LoreDock 项目只会创建：
@@ -98,6 +111,13 @@ lore/
   tags/
 ```
 
+启用结构规划后会新增：
+
+```text
+outlines/
+scenes/
+```
+
 删除项会先进入：
 
 ```text
@@ -106,9 +126,10 @@ lore/
     manuscript/
     resources/
       story-bible/
+      outline-scenes/
 ```
 
-v0.2.1 不会创建索引、快照、导出、编译产物或远端 AI provider 配置目录。
+v0.3.0 不会创建索引、快照、导出、编译产物或远端 AI provider 配置目录。
 
 ## 命令
 
@@ -164,6 +185,25 @@ v0.2.1 不会创建索引、快照、导出、编译产物或远端 AI provider 
 - `LoreDock：还原故事圣经回收站项目`
 - `LoreDock：永久删除故事圣经回收站项目`
 
+### 结构规划命令
+
+- `LoreDock：启用结构规划`
+- `LoreDock：新建规划草稿`
+- `LoreDock：删除规划草稿`
+- `LoreDock：预览导入大纲到结构骨架`
+- `LoreDock：新建场景卡`
+- `LoreDock：新建场景卡并绑定此章节`
+- `LoreDock：绑定已有场景卡到此章节`
+- `LoreDock：绑定现有章节`
+- `LoreDock：新建章节并绑定`
+- `LoreDock：打开场景卡`
+- `LoreDock：编辑场景卡元数据`
+- `LoreDock：删除场景卡`
+- `LoreDock：还原结构规划资源`
+- `LoreDock：永久删除结构规划资源`
+- `LoreDock：刷新结构规划`
+- `LoreDock：切换结构规划资源垃圾桶`
+
 ## 架构边界
 
 LoreDock 的核心原则是本地、透明、可审计、可扩展。
@@ -177,11 +217,11 @@ LoreDock 的核心原则是本地、透明、可审计、可扩展。
 
 ## 尚未包含
 
-`0.2.1` 仍然不包含：
+`0.3.0` 仍然不包含：
 
 - 自定义富文本手稿编辑器；章节目前是普通 Markdown 文件。
 - 势力、物品、事件等更细分 Story Bible 类型。
-- 大纲板、场景卡、剧情矩阵或时间线。
+- 拖拽式大纲板、剧情矩阵或时间线。
 - 引用索引、反向链接、实体图谱或一致性实验室。
 - 内置 AI assistant/provider 集成；当前只生成外置 AI 可读取的 agent 指南。
 - Compile/export、快照、版本对比或发布流程。
@@ -196,6 +236,6 @@ npm run compile
 npm test
 ```
 
-当前测试覆盖项目清单默认值与校验、项目修复、schema registry、migration no-op、安全写入边界、项目初始化、degraded mode、capability 路由、手稿结构操作、手稿诊断、安全路径处理、回收站恢复/永久删除和字数统计。
+当前测试覆盖项目清单默认值与校验、项目修复、schema registry、migration no-op、安全写入边界、项目初始化、degraded mode、capability 路由、手稿结构操作、结构规划大纲/场景卡导入、手稿与结构规划诊断、安全路径处理、回收站恢复/永久删除和字数统计。
 
-诊断信息在 `0.2.1` 仍不写入磁盘，只保存在内存中并输出到 LoreDock OutputChannel。
+诊断信息在 `0.3.0` 仍不写入磁盘，只保存在内存中并输出到 LoreDock OutputChannel。

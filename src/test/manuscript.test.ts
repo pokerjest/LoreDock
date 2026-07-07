@@ -137,6 +137,15 @@ suite("Manuscript", () => {
     assert.match(systemText, /id: "story_550e8400-e29b-41d4-a716-446655440000"/);
     assert.match(systemText, /createdAt.*ISO 时间字符串/);
     assert.match(systemText, /故事圣经诊断修复速查/);
+    assert.match(systemText, /结构规划协作规则/);
+    assert.match(systemText, /structure\.outline-scenes/);
+    assert.match(systemText, /`outlines\/` 是规划草稿和导入源，不是 canon/);
+    assert.match(systemText, /`scenes\/` 是场景卡 canon/);
+    assert.match(systemText, /场景卡 schema 当前为 `0\.3\.0`/);
+    assert.match(systemText, /`chapterRefs` 绑定 0\.\.N 个 Manuscript 稳定章节 ID/);
+    assert.match(systemText, /@scope book\|volume\|chapter\|scene/);
+    assert.match(systemText, /@include \.\/relative\.md/);
+    assert.match(systemText, /\.loredock\/trash\/resources\/outline-scenes/);
     assert.match(userText, /第一本书 用户 Agent 规则（可编辑）/);
     assert.match(userText, /工作区根目录的 `agent\.system\.md`/);
 
@@ -159,6 +168,8 @@ suite("Manuscript", () => {
     assert.deepEqual(result.plan.filesToModify, [bookAgentPath()]);
     assert.match(systemText, /工作区根目录 `agent\.md`/);
     assert.match(systemText, /直接创建人物卡片文件/);
+    assert.match(systemText, /结构规划协作规则/);
+    assert.match(systemText, /`chapterRefs`/);
     assert.match(userText, /- 保留我的协作偏好。/);
     assert.doesNotMatch(userText, /旧系统规则/);
     assert.doesNotMatch(userText, /LOREDOCK_AGENT_SYSTEM_RULES_START/);
@@ -178,6 +189,7 @@ suite("Manuscript", () => {
     assert.deepEqual(result.filesSkipped, []);
     assert.equal(seenPlans.length, 0);
     assert.match(systemText, /故事圣经是这本书的字典 \+ 百科全书/);
+    assert.match(systemText, /structure\.outline-scenes/);
     assert.equal(userText, "- 用户自己的规则。\n");
   });
 
